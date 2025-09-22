@@ -1,0 +1,114 @@
+:root {
+  --bg: #ffffff;
+  --fg: #111111;
+  --muted: #666666;
+  --border: #e6e6e6;
+  --accent: #e53935;      /* red */
+  --accent-dark: #b71c1c; /* dark red */
+  --shadow: 0 6px 18px rgba(0,0,0,.08);
+}
+
+body {
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  width: 340px;
+  padding: 14px 14px 12px;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+h3 {
+  margin: 0 0 10px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--fg);
+  padding-left: 10px;
+  border-left: 4px solid var(--accent);
+}
+
+input[type="file"] {
+  width: 100%;
+}
+
+#preview {
+  font-size: 12px;
+  background: #fafafa;
+  padding: 10px;
+  margin-top: 8px;
+  white-space: pre-wrap;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  box-shadow: var(--shadow);
+}
+
+#status { margin-top: 8px; font-size: 12px; color: var(--muted); }
+
+button {
+  margin-top: 8px;
+  width: 100%;
+  padding: 9px 10px;
+  cursor: pointer;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  border-radius: 8px;
+  font-weight: 600;
+  transition: background .15s ease, border-color .15s ease, transform .02s ease;
+}
+button:hover { background: var(--accent-dark); border-color: var(--accent-dark); }
+button:active { transform: translateY(1px); }
+button:disabled { opacity: .6; cursor: not-allowed; }
+
+#stopBtn {
+  background: #111;
+  border-color: #111;
+}
+#stopBtn:hover { background: #000; border-color: #000; }
+
+#parseBtn {
+  margin-top: 6px;
+  background: #fff;
+  color: var(--fg);
+  border: 1px solid var(--border);
+}
+#parseBtn:hover { border-color: var(--accent); color: var(--fg); }
+
+textarea#textInput {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--fg);
+  box-shadow: var(--shadow);
+}
+
+/* Toast Container - Popup UI */
+#toast-container {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Toast Style - Popup UI */
+.toast {
+  background-color: #111;
+  color: #fff;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border-left: 3px solid var(--accent);
+  font-size: 13px;
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  box-shadow: var(--shadow);
+}
+.toast.show { opacity: 1; transform: translateY(0); }
+.toast.success { background-color: var(--accent); }
+.toast.error   { background-color: #000; border-left-color: var(--accent); }
+.toast.info    { background-color: #111; border-left-color: var(--accent); }

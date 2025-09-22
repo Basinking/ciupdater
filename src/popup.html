@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>CI Updater</title>
+    <link rel="stylesheet" href="./popup.css" />
+  </head>
+  <body>
+    <h3>ServiceNow CI Updater</h3>
+    <label style="font-size:12px;margin-bottom:4px;display:block">เลือกไฟล์ .txt หรือวางข้อความด้านล่าง</label>
+    <input type="file" id="file" accept=".txt" />
+    <div style="margin:6px 0; text-align:center; font-size:12px; color:#666">หรือ</div>
+    <textarea id="textInput" placeholder="วางข้อความที่นี่..." rows="6" style="width:100%; box-sizing:border-box"></textarea>
+    <div style="margin:8px 0; font-size:12px; display:flex; align-items:center; gap:8px">
+      <input type="checkbox" id="testMode" />
+      <label for="testMode" style="user-select:none">Test Mode (ไม่กด Update)</label>
+    </div>
+    <div style="margin:6px 0; font-size:12px; display:flex; align-items:center; gap:8px">
+      <input type="checkbox" id="addComments" />
+      <label for="addComments" style="user-select:none">เพิ่ม Comments (CHG + Note)</label>
+    </div>
+    <button id="parseBtn">Parse Text</button>
+    <div id="preview"></div>
+    <button id="runBtn" disabled>Start</button>
+    <button id="stopBtn">Stop</button>
+    <button id="resetBtn" title="ล้างข้อมูลการทำงานทั้งหมด ยกเว้นตัวเลือกที่ตั้งไว้">Reset Data</button>
+    <div id="toast-container"></div>
+    <div id="status"></div>
+
+    <script type="module" src="./popup.ts"></script>
+  </body>
+</html>
