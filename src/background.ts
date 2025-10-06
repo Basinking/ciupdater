@@ -9,6 +9,12 @@ type Messages =
   | { type: "FINISHED_ONE" };
 
 let workerTabId: number | null = null;
+const RUN_STATE_KEYS = [
+  "ciUpdaterQueue",
+  "ciUpdaterBase",
+  "ciUpdaterData",
+  "ciUpdaterGoToCI",
+];
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (workerTabId === tabId) workerTabId = null;
@@ -18,9 +24,9 @@ chrome.runtime.onMessage.addListener((msg: Messages, _sender, sendResponse) => {
   (async () => {
     try {
       if (msg.type === "SET_RUNNING") {
-        // เมื่อเริ่มรอบใหม่ เคลียร์สถานะ/คิวเดิมออกก่อนเสมอ เพื่อลดผลค้างจากรอบก่อนหน้า
+        // When starting a new run, clear leftover queue/data from previous runs
         if (msg.value === true) {
-          try { await chrome.storage.local.remove(["ciUpdaterQueue", "ciUpdaterBase", "ciUpdaterData"]); } catch {}
+          await clearRunState();
         }
         await setRunning(msg.value);
         sendResponse({ ok: true });
@@ -29,8 +35,6 @@ chrome.runtime.onMessage.addListener((msg: Messages, _sender, sendResponse) => {
 
       if (msg.type === "STOP_NOW") {
         await stopNow();
-        // ล้างสถานะ/คิวที่ค้างอยู่ทั้งหมดเมื่อหยุด
-        try { await chrome.storage.local.remove(["ciUpdaterQueue", "ciUpdaterBase", "ciUpdaterData"]); } catch {}
         sendResponse({ ok: true });
         return;
       }
@@ -43,9 +47,9 @@ chrome.runtime.onMessage.addListener((msg: Messages, _sender, sendResponse) => {
 
       if (msg.type === "RUN_UPDATE") {
         const { data } = msg;
-        // ก่อนตั้งค่ารอบใหม่ ให้ล้างคิว/ข้อมูลเดิมเพื่อกันหลงเหลือจากครั้งก่อน
-        try { await chrome.storage.local.remove(["ciUpdaterQueue", "ciUpdaterBase", "ciUpdaterData"]); } catch {}
-        // ถ้ามีหลาย CI ให้สร้างคิว
+        // Before preparing new data, reset any stale queue/info
+        await clearRunState();
+        // If multiple CIs are provided, build the queue from that list
         if (Array.isArray(data.cis) && data.cis.length > 1) {
           const base = { ...data } as any;
           delete base.ci;
@@ -85,6 +89,10 @@ chrome.runtime.onMessage.addListener((msg: Messages, _sender, sendResponse) => {
   return true;
 });
 
+async function clearRunState() {
+  try { await chrome.storage.local.remove(RUN_STATE_KEYS); } catch {}
+}
+
 function makeListUrl(ci: string, chg: string) {
   const base = "https://ricohap.service-now.com/now/nav/ui/classic/params/target/task_ci_list.do";
   const parts: string[] = [];
@@ -105,7 +113,7 @@ async function openOrReuseTab(url: string) {
       return;
     }
   } catch {
-    workerTabId = null; // ถ้าแท็บเดิมหายไป ให้สร้างใหม่
+    workerTabId = null; // Reset the worker tab if the previous one disappeared
   }
   const tab = await chrome.tabs.create({ url, active: true });
   if (tab.id != null) workerTabId = tab.id;
@@ -138,12 +146,15 @@ async function handleFinishedOne() {
     await setRunning(false);
     return;
   }
-  // หน่วงเล็กน้อยให้หน้า form submit ทันก่อนเปลี่ยนไป CI ถัดไป
+  // Delay briefly to let the form submit before moving to the next CI
   setTimeout(() => { setCurrentCiIndex(next); }, 1500);
 }
 
 async function setRunning(value: boolean) {
   await chrome.storage.local.set({ isRunning: value });
+  if (!value) {
+    await clearRunState();
+  }
   chrome.action.setBadgeBackgroundColor({ color: value ? "#0a84ff" : "#777" });
   chrome.action.setBadgeText({ text: value ? "RUN" : "" });
 }
