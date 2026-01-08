@@ -654,12 +654,17 @@ async function setReferenceField(
     // ป้องกันรันซ้ำบนหน้าเดียวกัน (เช่น reload หลัง update)
     if ((window as any).__ciUpdaterFormDone) return;
 
-    const { isRunning } = await chrome.storage.local.get("isRunning");
+    const { isRunning, ciUpdaterRunId } = await chrome.storage.local.get([
+      "isRunning",
+      "ciUpdaterRunId",
+    ]);
     if (isRunning === false) return;
 
     const { ciUpdaterData: data, ciUpdaterQueue: q } =
       await chrome.storage.local.get(["ciUpdaterData", "ciUpdaterQueue"]);
     if (!data) return;
+    if (ciUpdaterRunId && data.runId && data.runId !== ciUpdaterRunId) return;
+    if (ciUpdaterRunId && q?.runId && q.runId !== ciUpdaterRunId) return;
 
     // Show progress toast (e.g., 2/13) on the target page
     try {
@@ -925,7 +930,10 @@ async function setReferenceField(
         showPageToast(`Updated CI ${cur}/${total}`, "success", 2200);
       } catch {}
       try {
-        await chrome.runtime.sendMessage({ type: "FINISHED_ONE" });
+        await chrome.runtime.sendMessage({
+          type: "FINISHED_ONE",
+          runId: ciUpdaterRunId || data.runId,
+        });
         log("FINISHED_ONE sent");
       } catch (e) {
         log("FINISHED_ONE send error", e);

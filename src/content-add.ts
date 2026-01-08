@@ -9,13 +9,20 @@ function isRealAddPage(): boolean {
   try {
     if (!isRealAddPage()) return;
 
-    const { isRunning } = await chrome.storage.local.get("isRunning");
+    const { isRunning, ciUpdaterRunId } = await chrome.storage.local.get([
+      "isRunning",
+      "ciUpdaterRunId",
+    ]);
     if (isRunning === false) return;
 
     // ถ้ามีคำสั่งให้นำทางไปหน้า CI โดยตรง (หลัง submit) ให้ทำก่อน
     try {
       const { ciUpdaterGoToCI } = await chrome.storage.local.get("ciUpdaterGoToCI");
-      if (ciUpdaterGoToCI && ciUpdaterGoToCI.sysId) {
+      if (
+        ciUpdaterGoToCI &&
+        ciUpdaterGoToCI.sysId &&
+        (!ciUpdaterGoToCI.runId || ciUpdaterGoToCI.runId === ciUpdaterRunId)
+      ) {
         // เคลียร์ flag เพื่อป้องกันวนซ้ำ
         await chrome.storage.local.remove("ciUpdaterGoToCI");
         const sysId: string = ciUpdaterGoToCI.sysId;
@@ -25,11 +32,16 @@ function isRealAddPage(): boolean {
       }
     } catch {}
 
-    const { ciUpdaterData: data, ciUpdaterQueue: q } = await chrome.storage.local.get(["ciUpdaterData","ciUpdaterQueue"]);
+    const { ciUpdaterData: data, ciUpdaterQueue: q } = await chrome.storage.local.get([
+      "ciUpdaterData",
+      "ciUpdaterQueue",
+    ]);
     if (!data) {
       console.warn("[CI Updater] ไม่มีข้อมูลใน storage (เปิดจาก popup ก่อน)");
       return;
     }
+    if (ciUpdaterRunId && data.runId && data.runId !== ciUpdaterRunId) return;
+    if (ciUpdaterRunId && q?.runId && q.runId !== ciUpdaterRunId) return;
 
     // แสดงความคืบหน้าขณะกำลังเพิ่มความสัมพันธ์ CI
     try {
@@ -88,7 +100,7 @@ function isRealAddPage(): boolean {
       await tabExitEnterExit(disp);
       if (!hidden) return true;
       const t0 = Date.now();
-      while (Date.now() - t0 < 2000) {
+      while (Date.now() - t0 < 3500) {
         if ((hidden.value || "").length > 0) return true;
         await sleep(120);
       }
@@ -118,7 +130,13 @@ function isRealAddPage(): boolean {
       const hiddenCI = document.querySelector<HTMLInputElement>('input#task_ci\\.ci_item');
       const sysId = hiddenCI?.value || "";
       if (sysId) {
-        await chrome.storage.local.set({ ciUpdaterGoToCI: { sysId, ts: Date.now() } });
+        await chrome.storage.local.set({
+          ciUpdaterGoToCI: {
+            sysId,
+            ts: Date.now(),
+            runId: ciUpdaterRunId || data.runId,
+          },
+        });
       }
     } catch {}
 

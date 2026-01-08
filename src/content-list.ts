@@ -1,7 +1,8 @@
 // src/content-list.ts
 import { sleep, showPageToast } from "./common";
 
-type UpdaterData = { ci: string; chg: string };
+type UpdaterData = { ci: string; chg: string; runId?: string };
+type QueueData = { cis: string[]; index: number; runId?: string };
 type Timing = {
   initialDelayMs: number;
   tableWaitBudgetMs: number;
@@ -11,11 +12,11 @@ type Timing = {
 };
 
 const DEFAULT_TIMING: Timing = {
-  initialDelayMs: 120,     // หน่วงเริ่มต้นสั้น ๆ
-  tableWaitBudgetMs: 1200, // เวลารอให้ "ตาราง" โผล่
-  scanBudgetMs: 1500,      // เวลาสแกน/สังเกตแถวรวม
-  pollMs: 60,              // ความถี่ polling
-  observerBudgetMs: 2000,  // เพดานเวลาให้ MutationObserver ทำงาน
+  initialDelayMs: 180,     // หน่วงเริ่มต้นสั้น ๆ
+  tableWaitBudgetMs: 2500, // เวลารอให้ "ตาราง" โผล่
+  scanBudgetMs: 2500,      // เวลาสแกน/สังเกตแถวรวม
+  pollMs: 80,              // ความถี่ polling
+  observerBudgetMs: 3200,  // เพดานเวลาให้ MutationObserver ทำงาน
 };
 
 function isRealListPage(): boolean {
@@ -193,21 +194,54 @@ async function waitForMatchOrNoRows(
   });
 }
 
+async function waitForTableWithBackoff(
+  baseBudgetMs: number,
+  pollMs: number
+): Promise<HTMLTableElement | null> {
+  const attempts = [
+    { budgetMs: baseBudgetMs, delayMs: 0 },
+    { budgetMs: Math.max(3000, Math.round(baseBudgetMs * 1.5)), delayMs: 250 },
+    { budgetMs: Math.max(5000, Math.round(baseBudgetMs * 2.2)), delayMs: 450 },
+  ];
+
+  for (const a of attempts) {
+    if (a.delayMs) await sleep(a.delayMs);
+    const tbl = await waitForTableFast(a.budgetMs, pollMs);
+    if (tbl) return tbl;
+  }
+  return null;
+}
+
+function requestListRetry(runId?: string, reason?: string) {
+  try {
+    chrome.runtime.sendMessage({ type: "REQUEST_LIST_RETRY", runId, reason });
+  } catch {}
+}
+
 // --- Main -----------------------------------------------------------------
 (async function run() {
   try {
     if (!isRealListPage()) return;
 
-    const { isRunning } = await chrome.storage.local.get("isRunning");
+    const { isRunning, ciUpdaterRunId } = await chrome.storage.local.get([
+      "isRunning",
+      "ciUpdaterRunId",
+    ]);
     if (isRunning === false) return;
 
-    const { ciUpdaterData, ciUpdaterQueue: q } = await chrome.storage.local.get(["ciUpdaterData","ciUpdaterQueue"]);
+    const { ciUpdaterData, ciUpdaterQueue: qRaw } = await chrome.storage.local.get([
+      "ciUpdaterData",
+      "ciUpdaterQueue",
+    ]);
+    const q = qRaw as QueueData | undefined;
     let data = (ciUpdaterData || {}) as UpdaterData;
+    if (ciUpdaterRunId && data.runId && data.runId !== ciUpdaterRunId) return;
+    if (ciUpdaterRunId && q?.runId && q.runId !== ciUpdaterRunId) return;
 
     // รอบแรกอาจเกิด race: หน้า list โผล่ก่อน storage เขียนค่าเสร็จ → รอสั้น ๆ ให้มีข้อมูล
     if (!data.ci && !(q?.cis && Array.isArray(q.cis) && q.cis.length > 0)) {
       const t0 = Date.now();
-      while (Date.now() - t0 < 1500) {
+      while (Date.now() - t0 < 2800) {
         const g = await chrome.storage.local.get(["ciUpdaterData","ciUpdaterQueue"]);
         data = (g.ciUpdaterData || {}) as UpdaterData;
         if (data.ci || (g.ciUpdaterQueue?.cis && g.ciUpdaterQueue.cis.length > 0)) break;
@@ -242,16 +276,13 @@ async function waitForMatchOrNoRows(
 
     await sleep(eff.initialDelayMs);
 
-    let table = await waitForTableFast(eff.tableWaitBudgetMs, eff.pollMs);
+    const table = await waitForTableWithBackoff(eff.tableWaitBudgetMs, eff.pollMs);
     if (!table) {
-      // รอบแรกบางครั้งโหลดช้า → ลองเผื่อให้อีกก้อนหนึ่งแบบช้า (slow fallback)
-      table = await waitForTableFast(Math.max(2500, eff.tableWaitBudgetMs), eff.pollMs);
-      if (!table) {
-        // ไม่เห็นตารางเลย → อย่ารีบไป Add (กัน false positive)
-        // ให้ user สั่งรันใหม่ หรือระบบจะเปิด Add เมื่อหน้า wrapper บอกชัดว่าไม่มี
-        console.warn("[CI Updater] table not found; giving up this pass to avoid false Add");
-        return;
-      }
+      // ไม่เห็นตารางเลย → อย่ารีบไป Add (กัน false positive)
+      // ให้ user สั่งรันใหม่ หรือระบบจะเปิด Add เมื่อหน้า wrapper บอกชัดว่าไม่มี
+      console.warn("[CI Updater] table not found; giving up this pass to avoid false Add");
+      requestListRetry(ciUpdaterRunId || data.runId, "table_not_found");
+      return;
     }
 
     // Fast-path: ถ้าตารางระบุ count แล้ว
@@ -323,14 +354,15 @@ async function waitForMatchOrNoRows(
     }
 
     // timeout: ไม่ชัด → ลองสแกนรอบสุดท้ายแบบช้าลงอีกนิดก่อนยอมแพ้
-    console.warn("[CI Updater] undecided (timeout); trying late-pass scan");
+    console.warn("[CI Updater] undecided (timeout); trying slow-pass scan");
+    await sleep(250);
     const late = await waitForMatchOrNoRows(
       table,
       data.ci || "",
       data.chg || "",
-      Math.max(1200, Math.round(eff.scanBudgetMs * 0.6)),
+      Math.max(2600, Math.round(eff.scanBudgetMs * 1.6)),
       eff.pollMs,
-      Math.max(1000, Math.round(eff.observerBudgetMs * 0.5))
+      Math.max(2600, Math.round(eff.observerBudgetMs * 1.6))
     );
     if (late === "match") {
       try {
@@ -347,9 +379,10 @@ async function waitForMatchOrNoRows(
       return;
     }
     console.warn("[CI Updater] still undecided after late-pass; skip to avoid false Add");
+    requestListRetry(ciUpdaterRunId || data.runId, "timeout_undecided");
   } catch (e) {
     console.error("[CI Updater] content-list error:", e);
-    chrome.runtime.sendMessage({ type: "OPEN_ADD_PAGE" });
+    requestListRetry(ciUpdaterRunId, "exception");
   }
 })();
 

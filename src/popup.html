@@ -6,7 +6,7 @@
     <link rel="stylesheet" href="./popup.css" />
   </head>
   <body>
-    <h3>ServiceNow CI Updater</h3>
+    <h3>ServiceNow CI Updater V1.0.0.0</h3>
     <label style="font-size:12px;margin-bottom:4px;display:block">เลือกไฟล์ .txt หรือวางข้อความด้านล่าง</label>
     <input type="file" id="file" accept=".txt" />
     <div style="margin:6px 0; text-align:center; font-size:12px; color:#666">หรือ</div>
@@ -18,6 +18,40 @@
     <div style="margin:6px 0; font-size:12px; display:flex; align-items:center; gap:8px">
       <input type="checkbox" id="addComments" />
       <label for="addComments" style="user-select:none">เพิ่ม Comments (CHG + Note)</label>
+    </div>
+    <div style="margin:8px 0; font-size:12px; border-top:1px solid #eee; padding-top:8px">
+      <div style="font-weight:600; margin-bottom:6px">Timing (ms)</div>
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px 8px">
+        <div>
+          <label for="timingBetween" style="display:block; margin-bottom:2px">Between CI</label>
+          <input type="number" id="timingBetween" min="500" step="100" style="width:100%; box-sizing:border-box" />
+        </div>
+        <div>
+          <label for="timingInitial" style="display:block; margin-bottom:2px">Initial Delay</label>
+          <input type="number" id="timingInitial" min="0" step="50" style="width:100%; box-sizing:border-box" />
+        </div>
+        <div>
+          <label for="timingTableWait" style="display:block; margin-bottom:2px">Table Wait</label>
+          <input type="number" id="timingTableWait" min="500" step="100" style="width:100%; box-sizing:border-box" />
+        </div>
+        <div>
+          <label for="timingScan" style="display:block; margin-bottom:2px">Scan Budget</label>
+          <input type="number" id="timingScan" min="500" step="100" style="width:100%; box-sizing:border-box" />
+        </div>
+        <div>
+          <label for="timingObserver" style="display:block; margin-bottom:2px">Observer Budget</label>
+          <input type="number" id="timingObserver" min="500" step="100" style="width:100%; box-sizing:border-box" />
+        </div>
+        <div>
+          <label for="timingPoll" style="display:block; margin-bottom:2px">Poll</label>
+          <input type="number" id="timingPoll" min="30" step="10" style="width:100%; box-sizing:border-box" />
+        </div>
+      </div>
+      <div style="margin-top:6px; display:flex; gap:6px">
+        <button id="saveTimingBtn" type="button">Save Timing</button>
+        <button id="resetTimingBtn" type="button">Reset Timing</button>
+      </div>
+      <div style="margin-top:4px; color:#666">เว้นว่าง = ใช้ค่าเริ่มต้น</div>
     </div>
     <button id="parseBtn">Parse Text</button>
     <div id="preview"></div>

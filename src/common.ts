@@ -109,6 +109,7 @@ export function showPageToast(
 }
 
 export interface ParsedData {
+  runId?: string;
   header: string;
   chg: string;
   mode: string;

@@ -12,7 +12,7 @@ export default defineManifest({
     48: "U logo.png",
     128: "U logo.png"
   },
-  permissions: ["tabs", "scripting", "storage", "activeTab", "contextMenus"],
+  permissions: ["tabs", "scripting", "storage", "activeTab", "contextMenus", "alarms"],
   host_permissions: ["https://ricohap.service-now.com/*"],
   action: {
     default_title: "CI Updater",

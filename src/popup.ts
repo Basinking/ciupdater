@@ -10,6 +10,24 @@ const resetBtn = document.getElementById("resetBtn") as HTMLButtonElement | null
 const statusEl = document.getElementById("status") as HTMLDivElement;
 const testModeEl = document.getElementById("testMode") as HTMLInputElement | null;
 const addCommentsEl = document.getElementById("addComments") as HTMLInputElement | null;
+const timingBetweenEl = document.getElementById("timingBetween") as HTMLInputElement | null;
+const timingInitialEl = document.getElementById("timingInitial") as HTMLInputElement | null;
+const timingTableWaitEl = document.getElementById("timingTableWait") as HTMLInputElement | null;
+const timingScanEl = document.getElementById("timingScan") as HTMLInputElement | null;
+const timingObserverEl = document.getElementById("timingObserver") as HTMLInputElement | null;
+const timingPollEl = document.getElementById("timingPoll") as HTMLInputElement | null;
+const saveTimingBtn = document.getElementById("saveTimingBtn") as HTMLButtonElement | null;
+const resetTimingBtn = document.getElementById("resetTimingBtn") as HTMLButtonElement | null;
+
+const DEFAULT_TIMING = {
+  initialDelayMs: 180,
+  tableWaitBudgetMs: 2500,
+  scanBudgetMs: 2500,
+  pollMs: 80,
+  observerBudgetMs: 3200,
+  betweenCiDelayMs: 3000,
+};
+
 function showToast(message: string, type: "success" | "error" | "info" = "info") {
   const container = document.getElementById("toast-container")!;
   const toast = document.createElement("div");
@@ -39,6 +57,40 @@ function resetUiState() {
 }
 
 resetUiState();
+
+function setTimingInput(
+  el: HTMLInputElement | null,
+  value: number | undefined,
+  placeholder: number
+) {
+  if (!el) return;
+  el.placeholder = String(placeholder);
+  el.value = typeof value === "number" ? String(value) : "";
+}
+
+function readTimingInput(el: HTMLInputElement | null, min: number) {
+  if (!el) return undefined;
+  const raw = (el.value || "").trim();
+  if (!raw) return undefined;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < min) return undefined;
+  return Math.round(n);
+}
+
+async function loadTimingInputs() {
+  try {
+    const { ciUpdaterTiming } = await chrome.storage.local.get("ciUpdaterTiming");
+    const t = (ciUpdaterTiming || {}) as Record<string, number>;
+    setTimingInput(timingBetweenEl, t.betweenCiDelayMs, DEFAULT_TIMING.betweenCiDelayMs);
+    setTimingInput(timingInitialEl, t.initialDelayMs, DEFAULT_TIMING.initialDelayMs);
+    setTimingInput(timingTableWaitEl, t.tableWaitBudgetMs, DEFAULT_TIMING.tableWaitBudgetMs);
+    setTimingInput(timingScanEl, t.scanBudgetMs, DEFAULT_TIMING.scanBudgetMs);
+    setTimingInput(timingObserverEl, t.observerBudgetMs, DEFAULT_TIMING.observerBudgetMs);
+    setTimingInput(timingPollEl, t.pollMs, DEFAULT_TIMING.pollMs);
+  } catch {}
+}
+
+void loadTimingInputs();
 
 // init test mode checkbox from storage
 (async () => {
@@ -70,6 +122,46 @@ addCommentsEl?.addEventListener("change", async () => {
   try {
     await chrome.storage.local.set({ ciUpdaterAddComments: !!addCommentsEl.checked });
   } catch {}
+});
+
+saveTimingBtn?.addEventListener("click", async () => {
+  try {
+    const timing: Record<string, number> = {};
+    const between = readTimingInput(timingBetweenEl, 500);
+    const initial = readTimingInput(timingInitialEl, 0);
+    const tableWait = readTimingInput(timingTableWaitEl, 500);
+    const scan = readTimingInput(timingScanEl, 500);
+    const observer = readTimingInput(timingObserverEl, 500);
+    const poll = readTimingInput(timingPollEl, 30);
+
+    if (between != null) timing.betweenCiDelayMs = between;
+    if (initial != null) timing.initialDelayMs = initial;
+    if (tableWait != null) timing.tableWaitBudgetMs = tableWait;
+    if (scan != null) timing.scanBudgetMs = scan;
+    if (observer != null) timing.observerBudgetMs = observer;
+    if (poll != null) timing.pollMs = poll;
+
+    if (Object.keys(timing).length === 0) {
+      await chrome.storage.local.remove("ciUpdaterTiming");
+      showToast("ใช้ค่า Timing เริ่มต้นแล้ว", "success");
+    } else {
+      await chrome.storage.local.set({ ciUpdaterTiming: timing });
+      showToast("บันทึก Timing แล้ว", "success");
+    }
+    await loadTimingInputs();
+  } catch {
+    showToast("บันทึก Timing ไม่สำเร็จ", "error");
+  }
+});
+
+resetTimingBtn?.addEventListener("click", async () => {
+  try {
+    await chrome.storage.local.remove("ciUpdaterTiming");
+    await loadTimingInputs();
+    showToast("รีเซ็ต Timing เป็นค่าเริ่มต้นแล้ว", "success");
+  } catch {
+    showToast("รีเซ็ต Timing ไม่สำเร็จ", "error");
+  }
 });
 
 function renderPreview(pd: ParsedData) {
