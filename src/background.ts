@@ -19,6 +19,8 @@ const RUN_STATE_KEYS = [
   "ciUpdaterGoToCI",
   "ciUpdaterNext",
   "ciUpdaterRetry",
+  "ciUpdaterPhase",
+  "ciUpdaterFormDone",
 ];
 
 chrome.tabs.onRemoved.addListener((tabId) => {
@@ -55,6 +57,16 @@ chrome.runtime.onMessage.addListener((msg: Messages, _sender, sendResponse) => {
         // Before preparing new data, reset any stale queue/info
         await clearRunState();
         const runId = await ensureRunId();
+        const { ciUpdaterAffectFirst, ciUpdaterOnlyAffect, ciUpdaterOnlyUpdate } =
+          await chrome.storage.local.get([
+            "ciUpdaterAffectFirst",
+            "ciUpdaterOnlyAffect",
+            "ciUpdaterOnlyUpdate",
+          ]);
+        const onlyAffect = ciUpdaterOnlyAffect === true;
+        const onlyUpdate = !onlyAffect && ciUpdaterOnlyUpdate === true;
+        const affectFirst = !onlyAffect && !onlyUpdate && ciUpdaterAffectFirst === true;
+        const initialPhase = affectFirst || onlyAffect ? "affect" : "update";
         // If multiple CIs are provided, build the queue from that list
         if (Array.isArray(data.cis) && data.cis.length > 1) {
           const base = { ...data, runId } as any;
@@ -62,9 +74,15 @@ chrome.runtime.onMessage.addListener((msg: Messages, _sender, sendResponse) => {
           await chrome.storage.local.set({
             ciUpdaterQueue: { cis: data.cis, index: 0, runId },
             ciUpdaterBase: base,
+            ciUpdaterPhase: initialPhase,
           });
           await setCurrentCiIndex(0, runId);
         } else {
+          if (onlyAffect) {
+            await chrome.storage.local.set({ ciUpdaterPhase: "affect" });
+          } else {
+            await chrome.storage.local.remove("ciUpdaterPhase");
+          }
           await chrome.storage.local.set({ ciUpdaterData: { ...data, runId } });
           const listUrl = makeListUrl(data.ci, data.chg);
           await openOrReuseTab(listUrl);
@@ -199,7 +217,21 @@ async function setCurrentCiIndex(index: number, runId?: string) {
 }
 
 async function handleFinishedOne(runId?: string) {
-  const { isRunning, ciUpdaterRunId } = await chrome.storage.local.get(["isRunning", "ciUpdaterRunId"]);
+  const {
+    isRunning,
+    ciUpdaterRunId,
+    ciUpdaterPhase,
+    ciUpdaterOnlyAffect,
+    ciUpdaterOnlyUpdate,
+  } = await chrome.storage.local.get([
+    "isRunning",
+    "ciUpdaterRunId",
+    "ciUpdaterPhase",
+    "ciUpdaterOnlyAffect",
+    "ciUpdaterOnlyUpdate",
+  ]);
+  const onlyAffect = ciUpdaterOnlyAffect === true;
+  const onlyUpdate = !onlyAffect && ciUpdaterOnlyUpdate === true;
   if (isRunning === false) return;
   if (runId && ciUpdaterRunId && runId !== ciUpdaterRunId) return;
   const { ciUpdaterQueue } = await chrome.storage.local.get("ciUpdaterQueue");
@@ -212,6 +244,15 @@ async function handleFinishedOne(runId?: string) {
   }
   const next = q.index + 1;
   if (next >= q.cis.length) {
+    if (ciUpdaterPhase === "affect") {
+      if (!onlyAffect && !onlyUpdate) {
+        await chrome.storage.local.set({ ciUpdaterPhase: "update" });
+        await scheduleNextCi(0, ciUpdaterRunId || runId);
+        return;
+      }
+      await setRunning(false);
+      return;
+    }
     await setRunning(false);
     return;
   }

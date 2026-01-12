@@ -223,11 +223,16 @@ function requestListRetry(runId?: string, reason?: string) {
   try {
     if (!isRealListPage()) return;
 
-    const { isRunning, ciUpdaterRunId } = await chrome.storage.local.get([
-      "isRunning",
-      "ciUpdaterRunId",
-    ]);
+    const { isRunning, ciUpdaterRunId, ciUpdaterPhase, ciUpdaterOnlyUpdate } =
+      await chrome.storage.local.get([
+        "isRunning",
+        "ciUpdaterRunId",
+        "ciUpdaterPhase",
+        "ciUpdaterOnlyUpdate",
+      ]);
     if (isRunning === false) return;
+    const isAffectPhase = ciUpdaterPhase === "affect";
+    const onlyUpdate = ciUpdaterOnlyUpdate === true;
 
     const { ciUpdaterData, ciUpdaterQueue: qRaw } = await chrome.storage.local.get([
       "ciUpdaterData",
@@ -249,13 +254,32 @@ function requestListRetry(runId?: string, reason?: string) {
       }
     }
 
+    const runIdForMsg = ciUpdaterRunId || data.runId;
+    const notifyPhaseDone = () => {
+      try {
+        chrome.runtime.sendMessage({ type: "FINISHED_ONE", runId: runIdForMsg });
+      } catch {}
+    };
+
+    const openAddOrSkip = (reason: string) => {
+      if (onlyUpdate) {
+        try {
+          showPageToast(`Update-only: ${reason}`, "info", 1800);
+        } catch {}
+        notifyPhaseDone();
+        return;
+      }
+      chrome.runtime.sendMessage({ type: "OPEN_ADD_PAGE" });
+    };
+
     // Show progress on list page as well
     try {
       const cis: string[] = (q?.cis && Array.isArray(q.cis)) ? q.cis : (data.ci ? [data.ci] : []);
       const total = Math.max(1, cis.length || 1);
       const index = Math.min(Math.max(0, q?.index ?? 0), total - 1);
       const current = index + 1;
-      showPageToast(`CI ${current}/${total} • Finding in list...`, "info", 1800);
+      const phaseLabel = isAffectPhase ? "Affect CI" : "CI";
+      showPageToast(`${phaseLabel} ${current}/${total} • Finding in list...`, "info", 1800);
     } catch {}
 
     const timing = await getTiming();
@@ -289,35 +313,64 @@ function requestListRetry(runId?: string, reason?: string) {
     const count = parseCountAttr(table);
     if (count != null) {
       if (count > 0) {
-        // ✅ ต้องตรวจให้ตรง CI/CHG จริงเท่านั้น
-        try {
-          const ok = openMatchedRow(data.ci || "", data.chg || "");
-          if (!ok) {
-            // แถวอาจยังไม่วาดครบ ให้รอรอบสั้น ๆ หา match ก่อนค่อยตัดสินใจ
-            const quick = await waitForMatchOrNoRows(
-              table,
-              data.ci || "",
-              data.chg || "",
-              Math.min(1800, eff.scanBudgetMs),
-              eff.pollMs,
-              Math.min(1800, eff.observerBudgetMs)
-            );
-            if (quick === "match") {
-              const ok2 = openMatchedRow(data.ci || "", data.chg || "");
-              if (!ok2) chrome.runtime.sendMessage({ type: "OPEN_ADD_PAGE" });
-            } else if (quick === "no-rows") {
-              chrome.runtime.sendMessage({ type: "OPEN_ADD_PAGE" });
+        if (isAffectPhase) {
+          // Affect-only pass: verify match, then move to next CI
+          try {
+            const ok = hasMatchedRow(data.ci || "", data.chg || "");
+            if (!ok) {
+              // แถวอาจยังไม่วาดครบ ให้รอรอบสั้น ๆ หา match ก่อนค่อยตัดสินใจ
+              const quick = await waitForMatchOrNoRows(
+                table,
+                data.ci || "",
+                data.chg || "",
+                Math.min(1800, eff.scanBudgetMs),
+                eff.pollMs,
+                Math.min(1800, eff.observerBudgetMs)
+              );
+              if (quick === "match") {
+                notifyPhaseDone();
+              } else if (quick === "no-rows") {
+                openAddOrSkip("ไม่พบ Task CI, ข้าม");
+              } else {
+                console.warn("[CI Updater] undecided after quick pass on count>0; skip to avoid false Add");
+              }
             } else {
-              console.warn("[CI Updater] undecided after quick pass on count>0; skip to avoid false Add");
+              notifyPhaseDone();
             }
+          } catch (e) {
+            console.warn("[CI Updater] match check by count failed:", e);
           }
-        } catch (e) {
-          console.warn("[CI Updater] open row by count failed:", e);
+        } else {
+          // ✅ ต้องตรวจให้ตรง CI/CHG จริงเท่านั้น
+          try {
+            const ok = openMatchedRow(data.ci || "", data.chg || "");
+            if (!ok) {
+              // แถวอาจยังไม่วาดครบ ให้รอรอบสั้น ๆ หา match ก่อนค่อยตัดสินใจ
+              const quick = await waitForMatchOrNoRows(
+                table,
+                data.ci || "",
+                data.chg || "",
+                Math.min(1800, eff.scanBudgetMs),
+                eff.pollMs,
+                Math.min(1800, eff.observerBudgetMs)
+              );
+              if (quick === "match") {
+                const ok2 = openMatchedRow(data.ci || "", data.chg || "");
+                if (!ok2) openAddOrSkip("ไม่พบ Task CI, ข้าม");
+              } else if (quick === "no-rows") {
+                openAddOrSkip("ไม่พบ Task CI, ข้าม");
+              } else {
+                console.warn("[CI Updater] undecided after quick pass on count>0; skip to avoid false Add");
+              }
+            }
+          } catch (e) {
+            console.warn("[CI Updater] open row by count failed:", e);
+          }
         }
         return;
       } else {
         // ❌ 0 แถว ชัดเจน → ไป Add ไว
-        chrome.runtime.sendMessage({ type: "OPEN_ADD_PAGE" });
+        openAddOrSkip("ไม่พบ Task CI, ข้าม");
         return;
       }
     }
@@ -333,15 +386,19 @@ function requestListRetry(runId?: string, reason?: string) {
     );
 
     if (result === "match") {
-      // ✅ เจอแล้ว → คลิกเข้าเรคคอร์ดที่ตรงเท่านั้น
-      try {
-        const ok = openMatchedRow(data.ci || "", data.chg || "");
-        if (!ok) {
-          // หากไม่เจอแถวที่ตรง ให้ไปเพิ่มใหม่
-          chrome.runtime.sendMessage({ type: "OPEN_ADD_PAGE" });
+      if (isAffectPhase) {
+        notifyPhaseDone();
+      } else {
+        // ✅ เจอแล้ว → คลิกเข้าเรคคอร์ดที่ตรงเท่านั้น
+        try {
+          const ok = openMatchedRow(data.ci || "", data.chg || "");
+          if (!ok) {
+            // หากไม่เจอแถวที่ตรง ให้ไปเพิ่มใหม่
+            openAddOrSkip("ไม่พบ Task CI, ข้าม");
+          }
+        } catch (e) {
+          console.warn("[CI Updater] open matched row failed:", e);
         }
-      } catch (e) {
-        console.warn("[CI Updater] open matched row failed:", e);
       }
       return;
     }
@@ -349,7 +406,7 @@ function requestListRetry(runId?: string, reason?: string) {
       // ❌ ไม่เจอ → ไป Add
       const { isRunning: still } = await chrome.storage.local.get("isRunning");
       if (still === false) return;
-      chrome.runtime.sendMessage({ type: "OPEN_ADD_PAGE" });
+      openAddOrSkip("ไม่พบ Task CI, ข้าม");
       return;
     }
 
@@ -365,17 +422,21 @@ function requestListRetry(runId?: string, reason?: string) {
       Math.max(2600, Math.round(eff.observerBudgetMs * 1.6))
     );
     if (late === "match") {
-      try {
-        const ok = openMatchedRow(data.ci || "", data.chg || "");
-        if (!ok) chrome.runtime.sendMessage({ type: "OPEN_ADD_PAGE" });
-      } catch (e) {
-        console.warn("[CI Updater] open matched row (late) failed:", e);
+      if (isAffectPhase) {
+        notifyPhaseDone();
+      } else {
+        try {
+          const ok = openMatchedRow(data.ci || "", data.chg || "");
+          if (!ok) openAddOrSkip("ไม่พบ Task CI, ข้าม");
+        } catch (e) {
+          console.warn("[CI Updater] open matched row (late) failed:", e);
+        }
       }
       return;
     }
     if (late === "no-rows") {
       const { isRunning: still } = await chrome.storage.local.get("isRunning");
-      if (still !== false) chrome.runtime.sendMessage({ type: "OPEN_ADD_PAGE" });
+      if (still !== false) openAddOrSkip("ไม่พบ Task CI, ข้าม");
       return;
     }
     console.warn("[CI Updater] still undecided after late-pass; skip to avoid false Add");
@@ -400,6 +461,16 @@ function openMatchedRow(ci: string, chg: string): boolean {
   if (!link) return false;
   (link as HTMLAnchorElement).click();
   return true;
+}
+
+function hasMatchedRow(ci: string, chg: string): boolean {
+  const tbl = getListTable();
+  if (!tbl) return false;
+  const tbody = (tbl.tBodies && tbl.tBodies[0]) || tbl;
+  const rows = Array.from(
+    tbody.querySelectorAll<HTMLTableRowElement>("tr.list_row, tr")
+  ).filter(tr => tr.querySelectorAll("td").length > 0);
+  return rows.some(tr => findRowMatch(tr, ci, chg));
 }
 
 function openFirstRowLink(): boolean {

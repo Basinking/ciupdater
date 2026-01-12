@@ -16,6 +16,10 @@ body {
   color: var(--fg);
 }
 
+input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
 h3 {
   margin: 0 0 10px;
   font-size: 16px;
@@ -43,6 +47,13 @@ input[type="file"] {
 
 #status { margin-top: 8px; font-size: 12px; color: var(--muted); }
 
+#copyright {
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+}
+
 button {
   margin-top: 8px;
   width: 100%;
@@ -58,6 +69,14 @@ button {
 button:hover { background: var(--accent-dark); border-color: var(--accent-dark); }
 button:active { transform: translateY(1px); }
 button:disabled { opacity: .6; cursor: not-allowed; }
+
+.btn-secondary {
+  margin-top: 8px;
+  background: #fff;
+  color: var(--fg);
+  border: 1px solid var(--border);
+}
+.btn-secondary:hover { border-color: var(--accent); background: var(--accent); color: #fff; }
 
 #stopBtn {
   background: #111;

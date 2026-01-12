@@ -10,6 +10,11 @@ const resetBtn = document.getElementById("resetBtn") as HTMLButtonElement | null
 const statusEl = document.getElementById("status") as HTMLDivElement;
 const testModeEl = document.getElementById("testMode") as HTMLInputElement | null;
 const addCommentsEl = document.getElementById("addComments") as HTMLInputElement | null;
+const affectFirstEl = document.getElementById("affectFirst") as HTMLInputElement | null;
+const affectOnlyEl = document.getElementById("affectOnly") as HTMLInputElement | null;
+const updateOnlyEl = document.getElementById("updateOnly") as HTMLInputElement | null;
+const toggleTimingBtn = document.getElementById("toggleTimingBtn") as HTMLButtonElement | null;
+const timingSectionEl = document.getElementById("timingSection") as HTMLDivElement | null;
 const timingBetweenEl = document.getElementById("timingBetween") as HTMLInputElement | null;
 const timingInitialEl = document.getElementById("timingInitial") as HTMLInputElement | null;
 const timingTableWaitEl = document.getElementById("timingTableWait") as HTMLInputElement | null;
@@ -57,6 +62,18 @@ function resetUiState() {
 }
 
 resetUiState();
+
+let timingVisible = false;
+function setTimingVisible(visible: boolean) {
+  if (!timingSectionEl || !toggleTimingBtn) return;
+  timingVisible = visible;
+  timingSectionEl.style.display = visible ? "block" : "none";
+  toggleTimingBtn.textContent = visible
+    ? "ซ่อนการตั้งค่า Timing (ms)"
+    : "แสดงการตั้งค่า Timing (ms)";
+  toggleTimingBtn.setAttribute("aria-expanded", String(visible));
+}
+setTimingVisible(false);
 
 function setTimingInput(
   el: HTMLInputElement | null,
@@ -124,6 +141,88 @@ addCommentsEl?.addEventListener("change", async () => {
   } catch {}
 });
 
+// persist on change
+affectFirstEl?.addEventListener("change", async () => {
+  try {
+    await chrome.storage.local.set({ ciUpdaterAffectFirst: !!affectFirstEl.checked });
+  } catch {}
+});
+
+function applyRunModeConstraints() {
+  if (!affectOnlyEl || !updateOnlyEl) return;
+  if (affectOnlyEl.checked && updateOnlyEl.checked) {
+    updateOnlyEl.checked = false;
+  }
+  const onlySelected = affectOnlyEl.checked || updateOnlyEl.checked;
+  if (affectFirstEl) {
+    affectFirstEl.disabled = onlySelected;
+    if (onlySelected && affectFirstEl.checked) affectFirstEl.checked = false;
+  }
+}
+
+async function persistRunModeOptions() {
+  try {
+    const payload: Record<string, boolean> = {
+      ciUpdaterOnlyAffect: !!affectOnlyEl?.checked,
+      ciUpdaterOnlyUpdate: !!updateOnlyEl?.checked,
+    };
+    if (affectFirstEl) payload.ciUpdaterAffectFirst = !!affectFirstEl.checked;
+    await chrome.storage.local.set(payload);
+  } catch {}
+}
+
+// init affect/update options (default false)
+(async () => {
+  try {
+    if (!affectFirstEl && !affectOnlyEl && !updateOnlyEl) return;
+    const { ciUpdaterAffectFirst, ciUpdaterOnlyAffect, ciUpdaterOnlyUpdate } =
+      await chrome.storage.local.get([
+        "ciUpdaterAffectFirst",
+        "ciUpdaterOnlyAffect",
+        "ciUpdaterOnlyUpdate",
+      ]);
+    if (affectFirstEl) affectFirstEl.checked = Boolean(ciUpdaterAffectFirst);
+    if (affectOnlyEl) affectOnlyEl.checked = Boolean(ciUpdaterOnlyAffect);
+    if (updateOnlyEl) updateOnlyEl.checked = Boolean(ciUpdaterOnlyUpdate);
+    const before = {
+      affectFirst: !!affectFirstEl?.checked,
+      affectOnly: !!affectOnlyEl?.checked,
+      updateOnly: !!updateOnlyEl?.checked,
+    };
+    applyRunModeConstraints();
+    const after = {
+      affectFirst: !!affectFirstEl?.checked,
+      affectOnly: !!affectOnlyEl?.checked,
+      updateOnly: !!updateOnlyEl?.checked,
+    };
+    if (
+      before.affectFirst !== after.affectFirst ||
+      before.affectOnly !== after.affectOnly ||
+      before.updateOnly !== after.updateOnly
+    ) {
+      await persistRunModeOptions();
+    }
+  } catch {}
+})();
+
+affectOnlyEl?.addEventListener("change", async () => {
+  if (affectOnlyEl.checked && updateOnlyEl) updateOnlyEl.checked = false;
+  applyRunModeConstraints();
+  await persistRunModeOptions();
+  if (parsed) renderPreview(parsed);
+});
+
+updateOnlyEl?.addEventListener("change", async () => {
+  if (updateOnlyEl.checked && affectOnlyEl) affectOnlyEl.checked = false;
+  applyRunModeConstraints();
+  await persistRunModeOptions();
+  if (parsed) renderPreview(parsed);
+});
+
+toggleTimingBtn?.addEventListener("click", () => {
+  setTimingVisible(!timingVisible);
+});
+
 saveTimingBtn?.addEventListener("click", async () => {
   try {
     const timing: Record<string, number> = {};
@@ -166,20 +265,32 @@ resetTimingBtn?.addEventListener("click", async () => {
 
 function renderPreview(pd: ParsedData) {
   const cis = (pd.cis && pd.cis.length ? pd.cis : (pd.ci ? [pd.ci] : []));
+  const onlyAffect = !!affectOnlyEl?.checked;
+  const onlyUpdate = !!updateOnlyEl?.checked;
+  const opt = (v: string) => (onlyAffect && !v ? "(optional)" : v);
+  const modeLabel = onlyAffect ? "Affect-only" : (onlyUpdate ? "Update-only" : pd.mode);
   preview.textContent = [
     `Header: ${pd.header}`,
-    `Mode: ${pd.mode}`,
+    `Mode: ${modeLabel}`,
     `CHG: ${pd.chg}`,
     `CI(s): ${cis.join(', ')}`,
-    `Current Status: ${pd.currentStatus}`,
-    `Contact Name (clean): ${pd.contact}`,
-    `Location: ${pd.location}`,
-    `Note: ${pd.otherDesc}`
+    `Current Status: ${opt(pd.currentStatus)}`,
+    `Contact Name (clean): ${opt(pd.contact)}`,
+    `Location: ${opt(pd.location)}`,
+    `Note: ${opt(pd.otherDesc)}`
   ].join("\n");
 
   const valid = Boolean((cis.length > 0) && pd.chg);
   runBtn.disabled = !valid;
-  statusEl.textContent = valid ? "พร้อมอัปเดต" : "กรุณาตรวจสอบ CHG และ CI ในข้อมูล";
+  if (!valid) {
+    statusEl.textContent = "กรุณาตรวจสอบ CHG และ CI ในข้อมูล";
+  } else if (onlyAffect) {
+    statusEl.textContent = "Affect-only: ใช้เฉพาะ CHG และ CI";
+  } else if (onlyUpdate) {
+    statusEl.textContent = "Update-only: ข้ามการ Affect";
+  } else {
+    statusEl.textContent = "พร้อมอัปเดต";
+  }
 }
 
 fileInput.addEventListener("change", async (e) => {
@@ -212,6 +323,17 @@ runBtn.addEventListener("click", async () => {
   if (addCommentsEl) {
     try { await chrome.storage.local.set({ ciUpdaterAddComments: !!addCommentsEl.checked }); } catch {}
   }
+  // persist affect-first setting before running
+  if (affectFirstEl) {
+    try { await chrome.storage.local.set({ ciUpdaterAffectFirst: !!affectFirstEl.checked }); } catch {}
+  }
+  // persist affect-only/update-only setting before running
+  if (affectOnlyEl) {
+    try { await chrome.storage.local.set({ ciUpdaterOnlyAffect: !!affectOnlyEl.checked }); } catch {}
+  }
+  if (updateOnlyEl) {
+    try { await chrome.storage.local.set({ ciUpdaterOnlyUpdate: !!updateOnlyEl.checked }); } catch {}
+  }
   await chrome.runtime.sendMessage({ type: "SET_RUNNING", value: true });
   showToast("กำลังเปิดหน้ารายการ Task CI...", "info");
 
@@ -231,7 +353,14 @@ stopBtn.addEventListener("click", async () => {
 resetBtn?.addEventListener("click", async () => {
   try {
     if (!confirm("ยืนยันล้างข้อมูลทั้งหมด (ยกเว้นตัวเลือก)?")) return;
-    const KEEP_KEYS = ["ciUpdaterTestMode", "ciUpdaterAddComments", "ciUpdaterTiming"];
+    const KEEP_KEYS = [
+      "ciUpdaterTestMode",
+      "ciUpdaterAddComments",
+      "ciUpdaterAffectFirst",
+      "ciUpdaterOnlyAffect",
+      "ciUpdaterOnlyUpdate",
+      "ciUpdaterTiming",
+    ];
     const all = await chrome.storage.local.get(null as any);
     const keys = Object.keys(all || {});
     const removeKeys = keys.filter(k => !KEEP_KEYS.includes(k));

@@ -6,7 +6,7 @@
     <link rel="stylesheet" href="./popup.css" />
   </head>
   <body>
-    <h3>ServiceNow CI Updater V1.0.0.0</h3>
+    <h3>Ricoh ServiceNow CI Updater V2.0.0.0</h3>
     <label style="font-size:12px;margin-bottom:4px;display:block">เลือกไฟล์ .txt หรือวางข้อความด้านล่าง</label>
     <input type="file" id="file" accept=".txt" />
     <div style="margin:6px 0; text-align:center; font-size:12px; color:#666">หรือ</div>
@@ -19,7 +19,20 @@
       <input type="checkbox" id="addComments" />
       <label for="addComments" style="user-select:none">เพิ่ม Comments (CHG + Note)</label>
     </div>
-    <div style="margin:8px 0; font-size:12px; border-top:1px solid #eee; padding-top:8px">
+    <div style="margin:6px 0; font-size:12px; display:flex; align-items:center; gap:8px">
+      <input type="checkbox" id="affectFirst" />
+      <label for="affectFirst" style="user-select:none">Affect CI ก่อน Update (หลาย CI)</label>
+    </div>
+    <div style="margin:6px 0; font-size:12px; display:flex; align-items:center; gap:8px">
+      <input type="checkbox" id="affectOnly" />
+      <label for="affectOnly" style="user-select:none">ทำเฉพาะ Affect (ไม่ Update CI Data)</label>
+    </div>
+    <div style="margin:6px 0; font-size:12px; display:flex; align-items:center; gap:8px">
+      <input type="checkbox" id="updateOnly" />
+      <label for="updateOnly" style="user-select:none">ทำเฉพาะ Update CI Data (ไม่ Affect)</label>
+    </div>
+    <button id="toggleTimingBtn" type="button" class="btn-secondary">แสดงการตั้งค่า Timing (ms)</button>
+    <div id="timingSection" style="margin:8px 0; font-size:12px; border-top:1px solid #eee; padding-top:8px">
       <div style="font-weight:600; margin-bottom:6px">Timing (ms)</div>
       <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px 8px">
         <div>
@@ -60,6 +73,7 @@
     <button id="resetBtn" title="ล้างข้อมูลการทำงานทั้งหมด ยกเว้นตัวเลือกที่ตั้งไว้">Reset Data</button>
     <div id="toast-container"></div>
     <div id="status"></div>
+    <div id="copyright">&copy; 2025 Developer Team from RICOH (THAILAND) CO., LTD</div>
 
     <script type="module" src="./popup.ts"></script>
   </body>

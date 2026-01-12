@@ -9,28 +9,18 @@ function isRealAddPage(): boolean {
   try {
     if (!isRealAddPage()) return;
 
-    const { isRunning, ciUpdaterRunId } = await chrome.storage.local.get([
-      "isRunning",
-      "ciUpdaterRunId",
-    ]);
+    const { isRunning, ciUpdaterRunId, ciUpdaterPhase, ciUpdaterOnlyUpdate } =
+      await chrome.storage.local.get([
+        "isRunning",
+        "ciUpdaterRunId",
+        "ciUpdaterPhase",
+        "ciUpdaterOnlyUpdate",
+      ]);
     if (isRunning === false) return;
+    const isAffectPhase = ciUpdaterPhase === "affect";
+    const onlyUpdate = ciUpdaterOnlyUpdate === true;
 
-    // ถ้ามีคำสั่งให้นำทางไปหน้า CI โดยตรง (หลัง submit) ให้ทำก่อน
-    try {
-      const { ciUpdaterGoToCI } = await chrome.storage.local.get("ciUpdaterGoToCI");
-      if (
-        ciUpdaterGoToCI &&
-        ciUpdaterGoToCI.sysId &&
-        (!ciUpdaterGoToCI.runId || ciUpdaterGoToCI.runId === ciUpdaterRunId)
-      ) {
-        // เคลียร์ flag เพื่อป้องกันวนซ้ำ
-        await chrome.storage.local.remove("ciUpdaterGoToCI");
-        const sysId: string = ciUpdaterGoToCI.sysId;
-        const url = `${location.origin}/cmdb_ci.do?sys_id=${encodeURIComponent(sysId)}`;
-        location.href = url;
-        return;
-      }
-    } catch {}
+    // ถ้ามีคำสั่งให้นำทางไปหน้า CI โดยตรง (หลัง submit) จะจัดการหลังโหลด data
 
     const { ciUpdaterData: data, ciUpdaterQueue: q } = await chrome.storage.local.get([
       "ciUpdaterData",
@@ -42,6 +32,43 @@ function isRealAddPage(): boolean {
     }
     if (ciUpdaterRunId && data.runId && data.runId !== ciUpdaterRunId) return;
     if (ciUpdaterRunId && q?.runId && q.runId !== ciUpdaterRunId) return;
+
+    if (onlyUpdate) {
+      try {
+        showPageToast("Update-only: ข้ามการ Affect", "info", 2000);
+      } catch {}
+      try {
+        await chrome.runtime.sendMessage({
+          type: "FINISHED_ONE",
+          runId: ciUpdaterRunId || data.runId,
+        });
+      } catch {}
+      return;
+    }
+
+    // ถ้ามีคำสั่งให้นำทางไปหน้า CI โดยตรง (หลัง submit) ให้ทำก่อน
+    try {
+      const { ciUpdaterGoToCI } = await chrome.storage.local.get("ciUpdaterGoToCI");
+      if (
+        ciUpdaterGoToCI &&
+        ciUpdaterGoToCI.sysId &&
+        (!ciUpdaterGoToCI.runId || ciUpdaterGoToCI.runId === ciUpdaterRunId)
+      ) {
+        const sameCi = !ciUpdaterGoToCI.ci || !data.ci || ciUpdaterGoToCI.ci === data.ci;
+        const phase = (ciUpdaterGoToCI.phase || "") as string;
+        await chrome.storage.local.remove("ciUpdaterGoToCI");
+        if (sameCi) {
+          if (phase === "affect") {
+            if (isAffectPhase) return;
+          } else if (!isAffectPhase) {
+            const sysId: string = ciUpdaterGoToCI.sysId;
+            const url = `${location.origin}/cmdb_ci.do?sys_id=${encodeURIComponent(sysId)}`;
+            location.href = url;
+            return;
+          }
+        }
+      }
+    } catch {}
 
     // แสดงความคืบหน้าขณะกำลังเพิ่มความสัมพันธ์ CI
     try {
@@ -135,6 +162,9 @@ function isRealAddPage(): boolean {
             sysId,
             ts: Date.now(),
             runId: ciUpdaterRunId || data.runId,
+            ci: data.ci || "",
+            chg: data.chg || "",
+            phase: isAffectPhase ? "affect" : "update",
           },
         });
       }
@@ -143,6 +173,17 @@ function isRealAddPage(): boolean {
     await sleep(120);
     submitBtn.click();
     console.log("[CI Updater] Submit done");
+
+    if (isAffectPhase) {
+      await sleep(300);
+      try {
+        await chrome.runtime.sendMessage({
+          type: "FINISHED_ONE",
+          runId: ciUpdaterRunId || data.runId,
+        });
+      } catch {}
+      return;
+    }
 
     // พยายามคลิกลิงก์ CI ทันทีถ้าเห็น (กรณีไม่เกิด reload)
     try {

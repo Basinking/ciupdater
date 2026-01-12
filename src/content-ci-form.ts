@@ -80,7 +80,7 @@ function mapInstallStatus(valueRaw: string): string | null {
     .replace(/^[^A-Za-z0-9]+/, "")
     .trim()
     .toLowerCase();
-  // Return the <option value> expected by ServiceNow for Install Status
+  // Return the <option value> expected by Ricoh ServiceNow for Install Status
   switch (v) {
     case "absent":
       return "100";
@@ -513,7 +513,7 @@ async function setReferenceField(
   let ownsId = disp.getAttribute("aria-owns") || "";
   if (!ownsId) {
     const refName = disp.getAttribute("data-ref") || "";
-    if (refName) ownsId = `AC.${refName}`; // ปรับตามรูปแบบของ ServiceNow
+    if (refName) ownsId = `AC.${refName}`; // ปรับตามรูปแบบของ Ricoh ServiceNow
   }
   log(`aria-owns for ${usedSuffix || suffixes[0]}:`, ownsId || "<none>");
   if (ownsId) {
@@ -665,6 +665,39 @@ async function setReferenceField(
     if (!data) return;
     if (ciUpdaterRunId && data.runId && data.runId !== ciUpdaterRunId) return;
     if (ciUpdaterRunId && q?.runId && q.runId !== ciUpdaterRunId) return;
+
+    const runIdKey = (ciUpdaterRunId || data.runId || "") as string;
+    const indexKey = Math.max(0, q?.index ?? 0);
+    const ciKey = (data.ci || q?.cis?.[indexKey] || "") as string;
+    if (runIdKey) {
+      try {
+        const { ciUpdaterFormDone } = await chrome.storage.local.get("ciUpdaterFormDone");
+        const done = (ciUpdaterFormDone || {}) as {
+          runId?: string;
+          index?: number;
+          ci?: string;
+          ts?: number;
+        };
+        if (done.runId === runIdKey && done.index === indexKey && done.ci === ciKey) {
+          log("Skip duplicate CI update", done);
+          return;
+        }
+      } catch {}
+    }
+
+    const markFormDone = async () => {
+      if (!runIdKey) return;
+      try {
+        await chrome.storage.local.set({
+          ciUpdaterFormDone: {
+            runId: runIdKey,
+            index: indexKey,
+            ci: ciKey,
+            ts: Date.now(),
+          },
+        });
+      } catch {}
+    };
 
     // Show progress toast (e.g., 2/13) on the target page
     try {
@@ -959,12 +992,14 @@ async function setReferenceField(
       if (ciUpdaterTestMode) {
         log("Test Mode enabled: skip clicking Update");
         showPageToast("Test Mode: ข้ามการ Update", "info", 2200);
+        await markFormDone();
         await notifyFinished();
         return; // กรณีทดสอบ: ข้ามการ Update ไม่ต้องคลิกจริง
       }
     } catch {}
 
     log("Click Update button");
+    await markFormDone();
     updateBtn?.click();
     await notifyFinished();
   } catch (e) {
