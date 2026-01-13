@@ -7,6 +7,7 @@ const preview = document.getElementById("preview") as HTMLDivElement;
 const runBtn = document.getElementById("runBtn") as HTMLButtonElement;
 const stopBtn = document.getElementById("stopBtn") as HTMLButtonElement;
 const resetBtn = document.getElementById("resetBtn") as HTMLButtonElement | null;
+const outlookBtn = document.getElementById("outlookBtn") as HTMLButtonElement | null;
 const statusEl = document.getElementById("status") as HTMLDivElement;
 const testModeEl = document.getElementById("testMode") as HTMLInputElement | null;
 const addCommentsEl = document.getElementById("addComments") as HTMLInputElement | null;
@@ -51,6 +52,35 @@ function showToast(message: string, type: "success" | "error" | "info" = "info")
   }, 3000);
 }
 let parsed: ParsedData | null = null;
+
+function getActiveTab(): Promise<chrome.tabs.Tab | null> {
+  return new Promise((resolve) => {
+    try {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        resolve(tabs?.[0] ?? null);
+      });
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+function requestOutlookMessage(tabId: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.sendMessage(tabId, { type: "OUTLOOK_GET_EMAIL" }, (res) => {
+      const err = chrome.runtime.lastError;
+      if (err) {
+        reject(err);
+        return;
+      }
+      if (!res?.ok || !res.text) {
+        reject(new Error(res?.error || "not_found"));
+        return;
+      }
+      resolve(res.text as string);
+    });
+  });
+}
 
 function resetUiState() {
   parsed = null;
@@ -269,10 +299,12 @@ function renderPreview(pd: ParsedData) {
   const onlyUpdate = !!updateOnlyEl?.checked;
   const opt = (v: string) => (onlyAffect && !v ? "(optional)" : v);
   const modeLabel = onlyAffect ? "Affect-only" : (onlyUpdate ? "Update-only" : pd.mode);
+  const hasChg = Boolean(pd.chg);
+  const chgLabel = hasChg ? pd.chg : "(optional)";
   preview.textContent = [
     `Header: ${pd.header}`,
     `Mode: ${modeLabel}`,
-    `CHG: ${pd.chg}`,
+    `CHG: ${chgLabel}`,
     `CI(s): ${cis.join(', ')}`,
     `Current Status: ${opt(pd.currentStatus)}`,
     `Contact Name (clean): ${opt(pd.contact)}`,
@@ -280,10 +312,12 @@ function renderPreview(pd: ParsedData) {
     `Note: ${opt(pd.otherDesc)}`
   ].join("\n");
 
-  const valid = Boolean((cis.length > 0) && pd.chg);
+  const valid = Boolean(cis.length > 0);
   runBtn.disabled = !valid;
   if (!valid) {
-    statusEl.textContent = "กรุณาตรวจสอบ CHG และ CI ในข้อมูล";
+    statusEl.textContent = "กรุณาตรวจสอบ CI ในข้อมูล";
+  } else if (!hasChg) {
+    statusEl.textContent = "CHG ไม่พบ: จะค้นจาก CI เท่านั้น";
   } else if (onlyAffect) {
     statusEl.textContent = "Affect-only: ใช้เฉพาะ CHG และ CI";
   } else if (onlyUpdate) {
@@ -311,6 +345,34 @@ parseBtn.addEventListener("click", () => {
   }
   parsed = parseTxtContent(text);
   renderPreview(parsed);
+});
+
+outlookBtn?.addEventListener("click", async () => {
+  showToast("กำลังดึงข้อมูลจาก Outlook...", "info");
+  try {
+    const tab = await getActiveTab();
+    if (!tab?.id) {
+      showToast("ไม่พบแท็บที่เปิดอยู่", "error");
+      return;
+    }
+    const text = (await requestOutlookMessage(tab.id)).trim();
+    if (!text) {
+      showToast("ไม่พบข้อมูลอีเมลที่เปิดอยู่", "error");
+      return;
+    }
+    textInput.value = text;
+    parsed = parseTxtContent(text);
+    renderPreview(parsed);
+    showToast("ดึงข้อมูลจาก Outlook แล้ว", "success");
+  } catch (e: any) {
+    const msg = e?.message || String(e);
+    const lower = msg.toLowerCase();
+    if (lower.includes("receiving end does not exist") || lower.includes("could not establish connection")) {
+      showToast("กรุณาเปิดอีเมลใน Outlook Web ก่อน", "error");
+      return;
+    }
+    showToast("ดึงข้อมูลจาก Outlook ไม่สำเร็จ", "error");
+  }
 });
 
 runBtn.addEventListener("click", async () => {

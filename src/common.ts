@@ -46,6 +46,27 @@ export function cleanContactName(nameRaw: string): string {
   return s.trim();
 }
 
+function normalizeCurrentStatus(statusRaw: string): string {
+  let v = (statusRaw || "").trim();
+  if (!v) return "";
+  v = v.replace(/\s+/g, " ").trim();
+  if (/\binstock\b/i.test(v) || /^in\s*stock$/i.test(v)) {
+    v = v.replace(/\binstock\b/ig, "In Stock");
+    if (/^in\s*stock$/i.test(v)) v = "In Stock";
+  }
+  return v;
+}
+
+function normalizeLocation(locationRaw: string): string {
+  let v = (locationRaw || "").trim();
+  if (!v) return "";
+  v = v.replace(/\s+/g, " ").trim();
+  const upper = v.toUpperCase();
+  if (upper === "DHS-B1") return "DHS-B1-1";
+  if (upper === "DHS-B2") return "DHS-B2-1";
+  return v;
+}
+
 // Simple page toast (content-script friendly)
 export function showPageToast(
   message: string,
@@ -154,7 +175,8 @@ export function parseTxtContent(text: string): ParsedData {
 
   // ดึงค่าตามฟิลด์ โดยยืดหยุ่นกับรูปแบบที่แตกต่าง
   // ใช้ Install Status เป็นแหล่งข้อมูล Current Status ด้วย
-  const currentStatus = getBy("Current\\s*Status|Install\\s*Status|Status");
+  const currentStatusRaw = getBy("Current\\s*Status|Install\\s*Status|Status");
+  const currentStatus = normalizeCurrentStatus(currentStatusRaw);
   const toClient = getBy("To\\s*Client");
 
   // Contact: อาจมาเป็น Contact Name, Owned by, Owner by
@@ -163,7 +185,8 @@ export function parseTxtContent(text: string): ParsedData {
     getBy("Owned\\s*by|Owner\\s*by");
   const contact = cleanContactName(contactRaw);
 
-  const location = getBy("Location");
+  const locationRaw = getBy("Location");
+  const location = normalizeLocation(locationRaw);
 
   // Note/Comments/Other Desc → เก็บไว้ที่ otherDesc
   const comments =

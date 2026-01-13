@@ -74,7 +74,9 @@ function byIdPrefixSuffix<T extends Element>(
 }
 
 function mapInstallStatus(valueRaw: string): string | null {
-  let v = (valueRaw || "").trim();
+  const raw = (valueRaw || "").trim();
+  if (/\bscrap(?:ped)?\b/i.test(raw)) return "7";
+  let v = raw;
   // ตัดอักขระนำหน้าแปลก ๆ เช่น ":" หรือ "-" แล้ว normalize lower-case
   v = v
     .replace(/^[^A-Za-z0-9]+/, "")
@@ -103,6 +105,10 @@ function mapInstallStatus(valueRaw: string): string | null {
     default:
       return null; // ไม่รู้จักค่า → ไม่แตะต้อง
   }
+}
+
+function isScrappedStatus(valueRaw: string): boolean {
+  return /\bscrap(?:ped)?\b/i.test(valueRaw || "");
 }
 
 function getFormTableName(): string | null {
@@ -303,6 +309,59 @@ async function tabExitEnterExit(el: HTMLElement, waitMs = 80) {
   await sleep(waitMs);
   // exit again
   sendTab(el);
+}
+
+function normalizeChoiceLabel(value: string): string {
+  return (value || "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function findChoiceSelect(fieldSuffix: string): HTMLSelectElement | null {
+  return document.querySelector<HTMLSelectElement>(
+    `select[id$=".${fieldSuffix}"], select[name$=".${fieldSuffix}"]`
+  );
+}
+
+async function waitForChoiceOption(
+  fieldSuffix: string,
+  label: string,
+  timeoutMs = 5000,
+  pollMs = 120
+): Promise<{ select: HTMLSelectElement; value: string } | null> {
+  const want = normalizeChoiceLabel(label);
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeoutMs) {
+    const select = findChoiceSelect(fieldSuffix);
+    if (select) {
+      const option = Array.from(select.options).find(
+        (opt) => normalizeChoiceLabel(opt.textContent || "") === want
+      );
+      if (option) return { select, value: option.value };
+    }
+    await sleep(pollMs);
+  }
+  return null;
+}
+
+async function setChoiceByLabel(
+  fieldSuffix: string,
+  label: string,
+  waitMs = 4000,
+  settleMs = 1500
+): Promise<boolean> {
+  const found = await waitForChoiceOption(fieldSuffix, label, waitMs);
+  if (!found) return false;
+  const { select, value } = found;
+  select.focus();
+  select.value = value;
+  select.dispatchEvent(new Event("input", { bubbles: true }));
+  select.dispatchEvent(new Event("change", { bubbles: true }));
+  await tabExitEnterExit(select);
+  select.dispatchEvent(new Event("change", { bubbles: true }));
+  const t0 = Date.now();
+  while (Date.now() - t0 < settleMs && select.value !== value) {
+    await sleep(120);
+  }
+  return select.value === value;
 }
 
 async function setReferenceFieldDirect(
@@ -714,10 +773,11 @@ async function setReferenceField(
       );
     } catch {}
 
+    let detectedCIClass: string | null = null;
     try {
-      const ciClass = getDetectedCIClass();
-      log("Detected CI class", ciClass || "<unknown>");
-      if (ciClass) await runCategoryExtras(ciClass, data);
+      detectedCIClass = getDetectedCIClass();
+      log("Detected CI class", detectedCIClass || "<unknown>");
+      if (detectedCIClass) await runCategoryExtras(detectedCIClass, data);
     } catch {}
 
     // 0) รอให้ปุ่ม Update โผล่ (ยืนยันว่าอยู่บนหน้าแบบฟอร์มจริง)
@@ -728,9 +788,28 @@ async function setReferenceField(
     );
     log("Update button ready", updateBtn?.id || "<unknown>");
 
+    const rawStatus = (data.currentStatus || "").toString();
+    const isScrapped = isScrappedStatus(rawStatus);
+    let hardwareStatusApplied = false;
+    let installStatusApplied = false;
+
+    if (isScrapped) {
+      try {
+        hardwareStatusApplied = await setChoiceByLabel(
+          "hardware_status",
+          "Retired",
+          4000,
+          1500
+        );
+        if (hardwareStatusApplied) log("Hardware Status set");
+        else log("Hardware Status not applied");
+      } catch (e) {
+        log("Hardware Status error", e);
+      }
+    }
+
     // 1) ตั้งค่า Install Status จาก Current Status (ถ้ามีฟิลด์นี้)
     try {
-      const rawStatus = (data.currentStatus || "").toString();
       const mapped = mapInstallStatus(rawStatus);
       log("Install Status mapping", { rawStatus, mapped });
       if (mapped) {
@@ -789,11 +868,27 @@ async function setReferenceField(
           } catch {}
         }
 
+        installStatusApplied = applied;
         if (applied) log("Install Status set");
         else log("Install Status not applied");
       }
     } catch (e) {
       log("Install Status error", e);
+    }
+
+    if (isScrapped && hardwareStatusApplied && installStatusApplied) {
+      try {
+        const subApplied = await setChoiceByLabel(
+          "hardware_substatus",
+          "Scrapped",
+          6000,
+          1500
+        );
+        if (subApplied) log("Hardware Substatus set");
+        else log("Hardware Substatus not applied");
+      } catch (e) {
+        log("Hardware Substatus error", e);
+      }
     }
 
     // 2) ใส่ Location จากไฟล์ (reference field ถ้ามี)

@@ -3,7 +3,7 @@ import { defineManifest } from "@crxjs/vite-plugin";
 export default defineManifest({
   manifest_version: 3,
   name: "CI Updater Dev Team",
-  version: "1.1.0",
+  version: "2.0.0.0",
   description: "Service Auto Update",
   // ใช้โลโก้ที่เตรียมไว้เป็นไอคอนของส่วนขยาย
   icons: {
@@ -13,7 +13,11 @@ export default defineManifest({
     128: "U logo.png"
   },
   permissions: ["tabs", "scripting", "storage", "activeTab", "contextMenus", "alarms"],
-  host_permissions: ["https://ricohap.service-now.com/*"],
+  host_permissions: [
+    "https://ricohap.service-now.com/*",
+    "https://outlook.office.com/*",
+    "https://outlook.office365.com/*"
+  ],
   action: {
     default_title: "CI Updater",
     default_popup: "src/popup.html",
@@ -37,6 +41,15 @@ export default defineManifest({
     {
       matches: ["https://ricohap.service-now.com/*task_ci.do*"],
       js: ["src/common.ts", "src/content-add.ts"],
+      run_at: "document_idle",
+      all_frames: true
+    },
+    {
+      matches: [
+        "https://outlook.office.com/*",
+        "https://outlook.office365.com/*"
+      ],
+      js: ["src/content-outlook.ts"],
       run_at: "document_idle",
       all_frames: true
     },

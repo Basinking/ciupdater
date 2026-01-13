@@ -255,6 +255,7 @@ function requestListRetry(runId?: string, reason?: string) {
     }
 
     const runIdForMsg = ciUpdaterRunId || data.runId;
+    const hasChg = Boolean((data.chg || "").trim());
     const notifyPhaseDone = () => {
       try {
         chrome.runtime.sendMessage({ type: "FINISHED_ONE", runId: runIdForMsg });
@@ -262,6 +263,13 @@ function requestListRetry(runId?: string, reason?: string) {
     };
 
     const openAddOrSkip = (reason: string) => {
+      if (!hasChg) {
+        try {
+          showPageToast("CHG ไม่พบ: ข้ามการ Add", "info", 1800);
+        } catch {}
+        notifyPhaseDone();
+        return;
+      }
       if (onlyUpdate) {
         try {
           showPageToast(`Update-only: ${reason}`, "info", 1800);
