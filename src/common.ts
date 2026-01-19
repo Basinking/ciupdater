@@ -129,6 +129,14 @@ export function showPageToast(
   } catch {}
 }
 
+export interface CiOverride {
+  currentStatus?: string;
+  toClient?: string;
+  contact?: string;
+  location?: string;
+  otherDesc?: string;
+}
+
 export interface ParsedData {
   runId?: string;
   header: string;
@@ -136,6 +144,7 @@ export interface ParsedData {
   mode: string;
   ci: string;
   cis?: string[];
+  ciOverrides?: Record<string, CiOverride>;
   currentStatus: string;
   toClient: string;
   contact: string;
@@ -156,13 +165,125 @@ export function parseTxtContent(text: string): ParsedData {
   const lines = rawLines.map(normalizeSpaces).filter(Boolean);
   const whole = normalizeSpaces(text);
 
+  const labelDefs: Array<{
+    key: keyof CiOverride;
+    re: RegExp;
+    normalize: (v: string) => string;
+  }> = [
+    {
+      key: "currentStatus",
+      re: /^(?:\d+\.\s*)?(?:Current\s*Status|Install\s*Status|Status)\s*[:：]\s*(.*)$/i,
+      normalize: normalizeCurrentStatus,
+    },
+    {
+      key: "toClient",
+      re: /^(?:\d+\.\s*)?(?:To\s*Client)\s*[:：]\s*(.*)$/i,
+      normalize: (v) => v.trim(),
+    },
+    {
+      key: "contact",
+      re: /^(?:\d+\.\s*)?(?:Contact\s*Name|Owned\s*by|Owner\s*by)\s*[:：]\s*(.*)$/i,
+      normalize: cleanContactName,
+    },
+    {
+      key: "location",
+      re: /^(?:\d+\.\s*)?(?:Location)\s*[:：]\s*(.*)$/i,
+      normalize: normalizeLocation,
+    },
+    {
+      key: "otherDesc",
+      re: /^(?:\d+\.\s*)?(?:Comments?|Other\s*Desc\.?|Other\s*Description|Other|Note)\s*[:：]\s*(.*)$/i,
+      normalize: (v) => v.trim(),
+    },
+  ];
+
+  const isSectionHeader = (line: string) => /^\d+\s*[.)]?$/.test(line);
+  const extractCis = (line: string) =>
+    Array.from(line.matchAll(/CI-\d+/gi)).map((m) => m[0].toUpperCase());
+  const hasAnyField = (data: CiOverride | null | undefined) =>
+    !!data &&
+    Object.values(data).some(
+      (v) => typeof v === "string" && v.trim().length > 0
+    );
+
+  const orderedCis: string[] = [];
+  const addOrderedCi = (ciValue: string) => {
+    if (!orderedCis.includes(ciValue)) orderedCis.push(ciValue);
+  };
+
+  const ciOverrides: Record<string, CiOverride> = {};
+  let current: { cis: string[]; data: CiOverride } | null = null;
+  let pending: CiOverride | null = null;
+
+  const applyCurrentBlock = () => {
+    if (!current) return;
+    if (!current.cis.length || !hasAnyField(current.data)) {
+      current = null;
+      return;
+    }
+    for (const ciItem of current.cis) {
+      const key = ciItem.toUpperCase();
+      ciOverrides[key] = { ...(ciOverrides[key] || {}), ...current.data };
+    }
+    current = null;
+  };
+
+  const findField = (line: string): { key: keyof CiOverride; value: string } | null => {
+    for (const def of labelDefs) {
+      const m = line.match(def.re);
+      if (!m) continue;
+      const normalized = def.normalize(m[1] || "");
+      if (!normalized) return null;
+      return { key: def.key, value: normalized };
+    }
+    return null;
+  };
+
+  for (const line of lines) {
+    if (isSectionHeader(line)) {
+      applyCurrentBlock();
+      current = null;
+      pending = null;
+      continue;
+    }
+
+    const cisInLine = extractCis(line);
+    if (cisInLine.length) {
+      if (current && hasAnyField(current.data)) {
+        applyCurrentBlock();
+      }
+      if (!current) current = { cis: [], data: {} };
+      if (pending && hasAnyField(pending) && !hasAnyField(current.data)) {
+        current.data = { ...pending };
+        pending = null;
+      }
+      for (const c of cisInLine) {
+        if (!current.cis.includes(c)) current.cis.push(c);
+        addOrderedCi(c);
+      }
+    }
+
+    const field = findField(line);
+    if (field) {
+      if (!current) {
+        pending = { ...(pending || {}), [field.key]: field.value };
+      } else {
+        current.data[field.key] = field.value;
+      }
+    }
+  }
+  applyCurrentBlock();
+
   // ดึง CHG จากทั้งเอกสาร รองรับ "Change #CHG0039650" หรือรูปแบบอื่น ๆ
   const chgMatch = whole.match(/CHG\d+/i);
   const chg = chgMatch ? chgMatch[0].toUpperCase() : "";
 
   // ดึง CI ทั้งหมดจากเอกสาร เช่น "CI-191003" รองรับหลายบรรทัด
   const ciAll = Array.from(whole.matchAll(/CI-\d+/gi)).map(m => m[0].toUpperCase());
-  const cis = Array.from(new Set(ciAll));
+  const cis: string[] = [...orderedCis];
+  for (const ciItem of ciAll) {
+    if (!cis.includes(ciItem)) cis.push(ciItem);
+  }
   const ci = cis[0] || "";
 
   // helper: label ที่มีช่องว่างแปลก ๆ, เครื่องหมาย : หรือ ： และอาจมีเลขลำดับนำหน้า
@@ -213,6 +334,7 @@ export function parseTxtContent(text: string): ParsedData {
     mode,
     ci,
     cis,
+    ciOverrides: Object.keys(ciOverrides).length > 0 ? ciOverrides : undefined,
     currentStatus,
     toClient,
     contact,

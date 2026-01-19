@@ -1,5 +1,5 @@
 // src/background.ts
-import type { ParsedData } from "./common";
+import type { ParsedData, CiOverride } from "./common";
 
 type Messages =
   | { type: "RUN_UPDATE"; data: ParsedData }
@@ -22,6 +22,24 @@ const RUN_STATE_KEYS = [
   "ciUpdaterPhase",
   "ciUpdaterFormDone",
 ];
+
+function normalizeCiKey(ciRaw?: string | null): string {
+  return (ciRaw || "").trim().toUpperCase();
+}
+
+function resolvePrimaryCi(data: ParsedData): string {
+  if (data.ci) return data.ci;
+  if (Array.isArray(data.cis) && data.cis.length > 0) return data.cis[0];
+  return "";
+}
+
+function applyCiOverrides(base: ParsedData, ciRaw: string): ParsedData {
+  const ci = normalizeCiKey(ciRaw);
+  if (!ci) return { ...base, ci: ciRaw };
+  const override: CiOverride | undefined = base.ciOverrides?.[ci];
+  if (!override) return { ...base, ci };
+  return { ...base, ...override, ci };
+}
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (workerTabId === tabId) workerTabId = null;
@@ -57,6 +75,8 @@ chrome.runtime.onMessage.addListener((msg: Messages, _sender, sendResponse) => {
         // Before preparing new data, reset any stale queue/info
         await clearRunState();
         const runId = await ensureRunId();
+        const baseWithRun = { ...data, runId } as ParsedData;
+        const primaryCi = resolvePrimaryCi(baseWithRun);
         const { ciUpdaterAffectFirst, ciUpdaterOnlyAffect, ciUpdaterOnlyUpdate } =
           await chrome.storage.local.get([
             "ciUpdaterAffectFirst",
@@ -69,7 +89,7 @@ chrome.runtime.onMessage.addListener((msg: Messages, _sender, sendResponse) => {
         const initialPhase = affectFirst || onlyAffect ? "affect" : "update";
         // If multiple CIs are provided, build the queue from that list
         if (Array.isArray(data.cis) && data.cis.length > 1) {
-          const base = { ...data, runId } as any;
+          const base = { ...baseWithRun } as any;
           delete base.ci;
           await chrome.storage.local.set({
             ciUpdaterQueue: { cis: data.cis, index: 0, runId },
@@ -83,8 +103,9 @@ chrome.runtime.onMessage.addListener((msg: Messages, _sender, sendResponse) => {
           } else {
             await chrome.storage.local.remove("ciUpdaterPhase");
           }
-          await chrome.storage.local.set({ ciUpdaterData: { ...data, runId } });
-          const listUrl = makeListUrl(data.ci, data.chg);
+          const prepared = applyCiOverrides(baseWithRun, primaryCi);
+          await chrome.storage.local.set({ ciUpdaterData: prepared });
+          const listUrl = makeListUrl(prepared.ci, prepared.chg);
           await openOrReuseTab(listUrl);
         }
 
@@ -204,15 +225,17 @@ async function setCurrentCiIndex(index: number, runId?: string) {
   if (runId && ciUpdaterRunId && runId !== ciUpdaterRunId) return;
   if (ciUpdaterQueue?.runId && ciUpdaterRunId && ciUpdaterQueue.runId !== ciUpdaterRunId) return;
   const cis: string[] = ciUpdaterQueue?.cis || [];
-  const chg: string = ciUpdaterBase?.chg || "";
-  const base = ciUpdaterBase || {};
+  const base = (ciUpdaterBase || {}) as ParsedData;
   const ci = cis[index] || "";
-  const data = { ...base, ci, runId: ciUpdaterRunId || runId } as ParsedData;
+  const data = applyCiOverrides(
+    { ...base, runId: ciUpdaterRunId || runId } as ParsedData,
+    ci
+  );
   await chrome.storage.local.set({
     ciUpdaterData: data,
     ciUpdaterQueue: { cis, index, runId: ciUpdaterRunId || runId },
   });
-  const listUrl = makeListUrl(ci, chg);
+  const listUrl = makeListUrl(data.ci, data.chg);
   await openOrReuseTab(listUrl);
 }
 

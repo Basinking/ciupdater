@@ -301,7 +301,7 @@ function renderPreview(pd: ParsedData) {
   const modeLabel = onlyAffect ? "Affect-only" : (onlyUpdate ? "Update-only" : pd.mode);
   const hasChg = Boolean(pd.chg);
   const chgLabel = hasChg ? pd.chg : "(optional)";
-  preview.textContent = [
+  const baseLines = [
     `Header: ${pd.header}`,
     `Mode: ${modeLabel}`,
     `CHG: ${chgLabel}`,
@@ -310,7 +310,32 @@ function renderPreview(pd: ParsedData) {
     `Contact Name (clean): ${opt(pd.contact)}`,
     `Location: ${opt(pd.location)}`,
     `Note: ${opt(pd.otherDesc)}`
-  ].join("\n");
+  ];
+
+  const overrideLines: string[] = [];
+  const overrideEntries = pd.ciOverrides ? Object.entries(pd.ciOverrides) : [];
+  if (overrideEntries.length) {
+    const items = overrideEntries
+      .map(([ciValue, v]) => {
+        const parts: string[] = [];
+        if (v.currentStatus) parts.push(`Status=${v.currentStatus}`);
+        if (v.contact) parts.push(`Contact=${v.contact}`);
+        if (v.location) parts.push(`Location=${v.location}`);
+        if (v.otherDesc) parts.push(`Note=${v.otherDesc}`);
+        if (v.toClient) parts.push(`ToClient=${v.toClient}`);
+        if (!parts.length) return null;
+        return `- ${ciValue}: ${parts.join(", ")}`;
+      })
+      .filter((v): v is string => Boolean(v));
+    if (items.length) {
+      const limit = 10;
+      overrideLines.push(`Overrides: ${items.length}`);
+      overrideLines.push(...items.slice(0, limit));
+      if (items.length > limit) overrideLines.push(`... (+${items.length - limit} more)`);
+    }
+  }
+
+  preview.textContent = [...baseLines, ...overrideLines].join("\n");
 
   const valid = Boolean(cis.length > 0);
   runBtn.disabled = !valid;

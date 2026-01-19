@@ -104,6 +104,35 @@ function buildExtractedText(rawText: string, subjectText = ""): string {
   };
   const allStops = [...Object.values(labelPatterns), "CI\\s*Description"];
 
+  const countLabel = (pattern: string) => {
+    const re = new RegExp(`^(?:${pattern})\\s*[:：]`, "i");
+    let count = 0;
+    for (const line of lines) {
+      const cleaned = stripLeadingNumber(line);
+      if (re.test(cleaned)) count += 1;
+    }
+    return count;
+  };
+
+  const hasRepeatedLabels =
+    cis.length > 1 &&
+    [
+      labelPatterns.currentStatus,
+      labelPatterns.contact,
+      labelPatterns.location,
+      labelPatterns.otherDesc,
+      labelPatterns.toClient,
+    ].some((p) => countLabel(p) > 1);
+
+  if (hasRepeatedLabels) {
+    const subjectLine = normalizeLine(subjectText);
+    let raw = cleanText.trim();
+    if (subjectLine && !raw.includes(subjectLine)) {
+      raw = `${subjectLine}\n\n${raw}`;
+    }
+    return raw.trim();
+  }
+
   const currentStatus = findValue(lines, cleanText, labelPatterns.currentStatus, allStops);
   const toClient = findValue(lines, cleanText, labelPatterns.toClient, allStops);
   const contact = findValue(lines, cleanText, labelPatterns.contact, allStops);
