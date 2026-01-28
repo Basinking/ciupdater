@@ -170,18 +170,43 @@ function extractFromElement(el: Element | null, subjectText: string): string | n
 }
 
 function getSubjectText(): string {
-  const candidates: string[] = [];
-  const addCandidate = (text: string | null | undefined) => {
+  const pickChgText = (text: string | null | undefined) => {
     const t = normalizeLine(text || "");
-    if (!t) return;
-    if (t.length > 200) return;
-    candidates.push(t);
+    if (!t) return "";
+    const m = t.match(/CHG\d+/i);
+    if (!m) return "";
+    if (t.length <= 200) return t;
+    return m[0].toUpperCase();
+  };
+
+  const pickFromElement = (el: HTMLElement) => {
+    const fromTitle = pickChgText(el.getAttribute("title"));
+    if (fromTitle) return fromTitle;
+    const fromAria = pickChgText(el.getAttribute("aria-label"));
+    if (fromAria) return fromAria;
+
+    const nestedAttr = el.querySelectorAll<HTMLElement>(
+      '[title*="chg" i], [aria-label*="chg" i]'
+    );
+    for (const node of nestedAttr) {
+      const nestedTitle = pickChgText(node.getAttribute("title"));
+      if (nestedTitle) return nestedTitle;
+      const nestedAria = pickChgText(node.getAttribute("aria-label"));
+      if (nestedAria) return nestedAria;
+      const nestedText = pickChgText(node.textContent);
+      if (nestedText) return nestedText;
+    }
+
+    const fromText = pickChgText(el.textContent);
+    if (fromText) return fromText;
+    return "";
   };
 
   const selectors = [
     '[data-testid="message-subject"]',
     '[data-testid="readingPaneSubject"]',
     '[data-testid*="subject"]',
+    '[id*="_SUBJECT"]',
     '[aria-label="Message subject"]',
     '[aria-label*="Subject"]',
     'div[role="heading"]',
@@ -191,11 +216,11 @@ function getSubjectText(): string {
 
   for (const sel of selectors) {
     const els = document.querySelectorAll<HTMLElement>(sel);
-    for (const el of els) addCandidate(el.textContent || "");
+    for (const el of els) {
+      const picked = pickFromElement(el);
+      if (picked) return picked;
+    }
   }
-
-  const withChg = candidates.find((t) => /CHG\d+/i.test(t));
-  if (withChg) return withChg;
 
   const title = normalizeLine(document.title || "");
   if (/CHG\d+/i.test(title)) return title;

@@ -107,8 +107,14 @@ function mapInstallStatus(valueRaw: string): string | null {
   }
 }
 
-function isScrappedStatus(valueRaw: string): boolean {
-  return /\bscrap(?:ped)?\b/i.test(valueRaw || "");
+function getRetiredSubstatus(
+  valueRaw: string
+): "Scrapped" | "Sold" | "Stolen" | null {
+  const raw = (valueRaw || "").toString();
+  if (/\bscrap(?:ped)?\b/i.test(raw)) return "Scrapped";
+  if (/\bsold\b/i.test(raw)) return "Sold";
+  if (/\bstolen\b/i.test(raw)) return "Stolen";
+  return null;
 }
 
 function getFormTableName(): string | null {
@@ -789,11 +795,11 @@ async function setReferenceField(
     log("Update button ready", updateBtn?.id || "<unknown>");
 
     const rawStatus = (data.currentStatus || "").toString();
-    const isScrapped = isScrappedStatus(rawStatus);
+    const retiredSubstatus = getRetiredSubstatus(rawStatus);
     let hardwareStatusApplied = false;
     let installStatusApplied = false;
 
-    if (isScrapped) {
+    if (retiredSubstatus) {
       try {
         hardwareStatusApplied = await setChoiceByLabel(
           "hardware_status",
@@ -810,7 +816,8 @@ async function setReferenceField(
 
     // 1) ตั้งค่า Install Status จาก Current Status (ถ้ามีฟิลด์นี้)
     try {
-      const mapped = mapInstallStatus(rawStatus);
+      let mapped = mapInstallStatus(rawStatus);
+      if (retiredSubstatus) mapped = "7"; // Retired
       log("Install Status mapping", { rawStatus, mapped });
       if (mapped) {
         let applied = false;
@@ -876,11 +883,11 @@ async function setReferenceField(
       log("Install Status error", e);
     }
 
-    if (isScrapped && hardwareStatusApplied && installStatusApplied) {
+    if (retiredSubstatus && hardwareStatusApplied && installStatusApplied) {
       try {
         const subApplied = await setChoiceByLabel(
           "hardware_substatus",
-          "Scrapped",
+          retiredSubstatus,
           6000,
           1500
         );
