@@ -1,4 +1,6 @@
 // src/content-outlook.ts
+import { parseTxtContent, showPageToast, sleep } from "./common";
+
 type OutlookMessage = { type: "OUTLOOK_GET_EMAIL" };
 
 function normalizeLine(line: string) {
@@ -185,9 +187,9 @@ function getSubjectText(): string {
     const fromAria = pickChgText(el.getAttribute("aria-label"));
     if (fromAria) return fromAria;
 
-    const nestedAttr = el.querySelectorAll<HTMLElement>(
+    const nestedAttr = Array.from(el.querySelectorAll<HTMLElement>(
       '[title*="chg" i], [aria-label*="chg" i]'
-    );
+    ));
     for (const node of nestedAttr) {
       const nestedTitle = pickChgText(node.getAttribute("title"));
       if (nestedTitle) return nestedTitle;
@@ -250,6 +252,333 @@ function getMessageBodyText(): string | null {
   }
 
   return null;
+}
+
+type OutlookWatchOptions = {
+  watch: boolean;
+  autoRun: boolean;
+  onlyUnread: boolean;
+};
+
+const OUTLOOK_STORAGE_KEYS = [
+  "ciUpdaterOutlookWatch",
+  "ciUpdaterOutlookAutoRun",
+  "ciUpdaterOutlookOnlyUnread",
+  "ciUpdaterOutlookProcessed",
+] as const;
+
+let outlookOptions: OutlookWatchOptions = {
+  watch: false,
+  autoRun: false,
+  onlyUnread: true,
+};
+
+let processedIds = new Set<string>();
+let observer: MutationObserver | null = null;
+let scanTimer: number | null = null;
+let scanPending = false;
+let inProgressId: string | null = null;
+let lastScanTs = 0;
+
+async function loadOutlookOptions() {
+  try {
+    const res = await chrome.storage.local.get(OUTLOOK_STORAGE_KEYS as any);
+    outlookOptions = {
+      watch: Boolean(res.ciUpdaterOutlookWatch),
+      autoRun: Boolean(res.ciUpdaterOutlookAutoRun),
+      onlyUnread: res.ciUpdaterOutlookOnlyUnread === false ? false : true,
+    };
+    const stored = (res.ciUpdaterOutlookProcessed || []) as string[];
+    processedIds = new Set(stored.filter(Boolean).slice(-200));
+  } catch {}
+}
+
+async function saveProcessedIds() {
+  try {
+    const arr = Array.from(processedIds).slice(-200);
+    await chrome.storage.local.set({ ciUpdaterOutlookProcessed: arr });
+  } catch {}
+}
+
+function rememberProcessed(id: string) {
+  if (!id) return;
+  processedIds.add(id);
+  void saveProcessedIds();
+}
+
+function normalizeText(text: string) {
+  return (text || "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function getFolderSelectedText(): string {
+  const folderRoot =
+    document.querySelector('[data-testid="folderPane"]') ||
+    document.querySelector('[aria-label="Folders"]') ||
+    document.querySelector('[role="tree"]');
+  if (!folderRoot) return "";
+  const selected =
+    folderRoot.querySelector<HTMLElement>('[role="treeitem"][aria-selected="true"]') ||
+    folderRoot.querySelector<HTMLElement>('[aria-current="true"]') ||
+    folderRoot.querySelector<HTMLElement>('.is-selected, .selected');
+  return selected?.textContent?.trim() || "";
+}
+
+function isInUpdateCiFolder(): boolean {
+  const selectedText = normalizeText(getFolderSelectedText());
+  if (!selectedText) return true; // best effort: allow if cannot detect
+  return selectedText.includes("update ci");
+}
+
+function getMessageListRoot(): ParentNode {
+  return (
+    document.querySelector('[data-testid="virtuoso-item-list"]') ||
+    document.querySelector('[role="listbox"]') ||
+    document
+  );
+}
+
+function getMessageRows(): HTMLElement[] {
+  const root = getMessageListRoot();
+  const rows = Array.from(
+    root.querySelectorAll<HTMLElement>('div[role="option"][data-convid], div[role="option"][data-item-index], div[role="option"]')
+  );
+  return rows;
+}
+
+function getRowTimeText(row: HTMLElement): string {
+  const timeEl =
+    row.querySelector<HTMLElement>("span._rWRU") ||
+    row.querySelector<HTMLElement>('[title*=":"]') ||
+    row.querySelector<HTMLElement>('span[aria-label*=":"]');
+  const titled = timeEl?.getAttribute("title")?.trim() || "";
+  if (titled) return titled;
+  return timeEl?.textContent?.trim() || "";
+}
+
+function getRowId(row: HTMLElement): string {
+  const base =
+    row.getAttribute("data-convid") ||
+    row.id ||
+    row.getAttribute("data-item-index") ||
+    "";
+  const timeText = getRowTimeText(row);
+  const subject = getRowSubject(row).slice(0, 120);
+  const parts = [base || "row", timeText, subject].filter(Boolean);
+  if (parts.length) return parts.join("|");
+  const aria = row.getAttribute("aria-label") || "";
+  return aria.slice(0, 200);
+}
+
+function getRowSubject(row: HTMLElement): string {
+  const subjectEl =
+    row.querySelector<HTMLElement>(".TtcXM") ||
+    row.querySelector<HTMLElement>('[data-testid="message-subject"]') ||
+    row.querySelector<HTMLElement>('[data-testid*="subject"]');
+  const subject = subjectEl?.textContent?.trim();
+  if (subject) return subject;
+  const aria = row.getAttribute("aria-label") || "";
+  return aria;
+}
+
+function getRowPreview(row: HTMLElement): string {
+  const previewEl = row.querySelector<HTMLElement>(".FqgPc");
+  return previewEl?.textContent?.trim() || "";
+}
+
+function isUpdateCiText(text: string): boolean {
+  return /\bupdate\s*ci\b/i.test(text || "");
+}
+
+function parseRgb(color: string): [number, number, number] | null {
+  const m = color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+  if (!m) return null;
+  return [Number(m[1]), Number(m[2]), Number(m[3])];
+}
+
+function isUnreadByColor(row: HTMLElement): boolean {
+  const target =
+    row.querySelector<HTMLElement>(".TtcXM") ||
+    row.querySelector<HTMLElement>(".FqgPc");
+  if (!target) return false;
+  const color = getComputedStyle(target).color || "";
+  const rgb = parseRgb(color);
+  if (!rgb) return false;
+  const [r, g, b] = rgb;
+  return r > 150 && r - g > 40 && r - b > 40;
+}
+
+function isUnreadByWeight(row: HTMLElement): boolean {
+  const target =
+    row.querySelector<HTMLElement>(".TtcXM") ||
+    row.querySelector<HTMLElement>(".FqgPc");
+  if (!target) return false;
+  const weight = Number(getComputedStyle(target).fontWeight);
+  return Number.isFinite(weight) && weight >= 600;
+}
+
+function isUnreadRow(row: HTMLElement): boolean {
+  const markReadBtn = row.querySelector(
+    'button[title*="Mark as read" i], button[aria-label*="Mark as read" i], button[title*="อ่านแล้ว" i], button[aria-label*="อ่านแล้ว" i]'
+  );
+  if (markReadBtn) return true;
+  const aria = row.getAttribute("aria-label") || "";
+  if (/unread/i.test(aria)) return true;
+  if (isUnreadByColor(row)) return true;
+  if (isUnreadByWeight(row)) return true;
+  return false;
+}
+
+function openRow(row: HTMLElement) {
+  try {
+    row.scrollIntoView({ block: "center" });
+  } catch {}
+  row.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+}
+
+function getRowHints(row: HTMLElement) {
+  const subject = getRowSubject(row);
+  const preview = getRowPreview(row);
+  const combined = `${subject} ${preview}`;
+  const ci = combined.match(/CI-\d+/i)?.[0]?.toUpperCase() || "";
+  const chg = combined.match(/CHG\d+/i)?.[0]?.toUpperCase() || "";
+  return { subject, preview, ci, chg };
+}
+
+async function waitForMessageText(hintCi: string, timeoutMs = 8000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeoutMs) {
+    const text = getMessageBodyText();
+    if (text) {
+      if (!hintCi || text.toUpperCase().includes(hintCi.toUpperCase())) return text;
+    }
+    await sleep(250);
+  }
+  return null;
+}
+
+async function startRunFromText(rawText: string) {
+  const parsed = parseTxtContent(rawText);
+  const hasCi = Boolean(parsed.ci || (parsed.cis && parsed.cis.length));
+  if (!hasCi) {
+    showPageToast("ไม่พบ CI ในเมลนี้", "error");
+    return { ok: false, reason: "no_ci" };
+  }
+  await chrome.runtime.sendMessage({ type: "SET_RUNNING", value: true });
+  const res = await chrome.runtime.sendMessage({ type: "RUN_UPDATE", data: parsed });
+  if (res?.ok) {
+    showPageToast("เริ่มอัปเดต CI แล้ว", "success");
+    return { ok: true };
+  }
+  showPageToast("เริ่มอัปเดตไม่สำเร็จ", "error");
+  return { ok: false, reason: res?.error || "run_failed" };
+}
+
+async function handleCandidate(row: HTMLElement) {
+  const rowId = getRowId(row);
+  if (!rowId) return;
+  inProgressId = rowId;
+  try {
+    const { subject, preview, ci } = getRowHints(row);
+    if (!outlookOptions.autoRun) {
+      const ok = confirm(`พบ Update CI: ${subject || preview}\nเริ่มทำงานเลยไหม?`);
+      if (!ok) {
+        rememberProcessed(rowId);
+        showPageToast("ข้ามเมลนี้แล้ว", "info");
+        return;
+      }
+    }
+    showPageToast("กำลังเปิดอีเมล Update CI...", "info");
+    openRow(row);
+    const text =
+      (await waitForMessageText(ci, 9000)) ||
+      buildExtractedText(preview, subject);
+    if (!text || !hasRequiredFields(text, subject)) {
+      showPageToast("ไม่พบข้อมูล Update CI จากเมลนี้", "error");
+      rememberProcessed(rowId);
+      return;
+    }
+    const result = await startRunFromText(text);
+    if (result.ok) rememberProcessed(rowId);
+  } finally {
+    inProgressId = null;
+  }
+}
+
+async function scanForUpdateEmail() {
+  if (!outlookOptions.watch) return;
+  if (inProgressId) return;
+  const now = Date.now();
+  if (now - lastScanTs < 600) return;
+  lastScanTs = now;
+  if (!isInUpdateCiFolder()) return;
+  const { isRunning } = await chrome.storage.local.get("isRunning");
+  if (isRunning === true) return;
+
+  const rows = getMessageRows();
+  for (const row of rows) {
+    const subject = getRowSubject(row);
+    if (!isUpdateCiText(subject)) continue;
+    const id = getRowId(row);
+    if (!id || processedIds.has(id) || id === inProgressId) continue;
+    if (outlookOptions.onlyUnread && !isUnreadRow(row)) continue;
+    await handleCandidate(row);
+    break;
+  }
+}
+
+function scheduleScan() {
+  if (scanPending) return;
+  scanPending = true;
+  setTimeout(() => {
+    scanPending = false;
+    void scanForUpdateEmail();
+  }, 450);
+}
+
+function startWatcher() {
+  if (observer) return;
+  const root = getMessageListRoot();
+  observer = new MutationObserver(scheduleScan);
+  observer.observe(root, { childList: true, subtree: true });
+  if (scanTimer) clearInterval(scanTimer);
+  scanTimer = window.setInterval(() => {
+    void scanForUpdateEmail();
+  }, 1500);
+  void scanForUpdateEmail();
+}
+
+function stopWatcher() {
+  if (observer) {
+    observer.disconnect();
+    observer = null;
+  }
+  if (scanTimer) {
+    clearInterval(scanTimer);
+    scanTimer = null;
+  }
+}
+
+async function initOutlookWatch() {
+  await loadOutlookOptions();
+  if (!outlookOptions.watch) {
+    stopWatcher();
+    return;
+  }
+  startWatcher();
+}
+
+if (window.top === window) {
+  void initOutlookWatch();
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== "local") return;
+    const keys = Object.keys(changes || {});
+    if (keys.some((k) => k.startsWith("ciUpdaterOutlook"))) {
+      void loadOutlookOptions().then(() => {
+        if (outlookOptions.watch) startWatcher();
+        else stopWatcher();
+      });
+    }
+  });
 }
 
 chrome.runtime.onMessage.addListener((msg: OutlookMessage, _sender, sendResponse) => {

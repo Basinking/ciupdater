@@ -8,6 +8,9 @@ const runBtn = document.getElementById("runBtn") as HTMLButtonElement;
 const stopBtn = document.getElementById("stopBtn") as HTMLButtonElement;
 const resetBtn = document.getElementById("resetBtn") as HTMLButtonElement | null;
 const outlookBtn = document.getElementById("outlookBtn") as HTMLButtonElement | null;
+const outlookWatchEl = document.getElementById("outlookWatch") as HTMLInputElement | null;
+const outlookAutoRunEl = document.getElementById("outlookAutoRun") as HTMLInputElement | null;
+const outlookOnlyUnreadEl = document.getElementById("outlookOnlyUnread") as HTMLInputElement | null;
 const statusEl = document.getElementById("status") as HTMLDivElement;
 const testModeEl = document.getElementById("testMode") as HTMLInputElement | null;
 const addCommentsEl = document.getElementById("addComments") as HTMLInputElement | null;
@@ -92,6 +95,52 @@ function resetUiState() {
 }
 
 resetUiState();
+
+function applyOutlookWatchConstraints() {
+  if (!outlookWatchEl) return;
+  const enabled = !!outlookWatchEl.checked;
+  if (outlookAutoRunEl) outlookAutoRunEl.disabled = !enabled;
+  if (outlookOnlyUnreadEl) outlookOnlyUnreadEl.disabled = !enabled;
+}
+
+async function persistOutlookWatchOptions() {
+  try {
+    await chrome.storage.local.set({
+      ciUpdaterOutlookWatch: !!outlookWatchEl?.checked,
+      ciUpdaterOutlookAutoRun: !!outlookAutoRunEl?.checked,
+      ciUpdaterOutlookOnlyUnread: !!outlookOnlyUnreadEl?.checked,
+    });
+  } catch {}
+}
+
+// init Outlook watch options
+(async () => {
+  try {
+    const {
+      ciUpdaterOutlookWatch,
+      ciUpdaterOutlookAutoRun,
+      ciUpdaterOutlookOnlyUnread,
+    } = await chrome.storage.local.get([
+      "ciUpdaterOutlookWatch",
+      "ciUpdaterOutlookAutoRun",
+      "ciUpdaterOutlookOnlyUnread",
+    ]);
+    if (outlookWatchEl) outlookWatchEl.checked = Boolean(ciUpdaterOutlookWatch);
+    if (outlookAutoRunEl) outlookAutoRunEl.checked = Boolean(ciUpdaterOutlookAutoRun);
+    if (outlookOnlyUnreadEl) {
+      outlookOnlyUnreadEl.checked = ciUpdaterOutlookOnlyUnread === false ? false : true;
+    }
+    applyOutlookWatchConstraints();
+  } catch {}
+})();
+
+outlookWatchEl?.addEventListener("change", async () => {
+  applyOutlookWatchConstraints();
+  await persistOutlookWatchOptions();
+});
+
+outlookAutoRunEl?.addEventListener("change", persistOutlookWatchOptions);
+outlookOnlyUnreadEl?.addEventListener("change", persistOutlookWatchOptions);
 
 let timingVisible = false;
 function setTimingVisible(visible: boolean) {
@@ -299,8 +348,19 @@ function renderPreview(pd: ParsedData) {
   const onlyUpdate = !!updateOnlyEl?.checked;
   const opt = (v: string) => (onlyAffect && !v ? "(optional)" : v);
   const modeLabel = onlyAffect ? "Affect-only" : (onlyUpdate ? "Update-only" : pd.mode);
-  const hasChg = Boolean(pd.chg);
-  const chgLabel = hasChg ? pd.chg : "(optional)";
+  const chgValues = new Set<string>();
+  if (pd.chg) chgValues.add(pd.chg);
+  if (pd.ciOverrides) {
+    for (const v of Object.values(pd.ciOverrides)) {
+      if (v?.chg) chgValues.add(v.chg);
+    }
+  }
+  const hasChg = chgValues.size > 0;
+  const chgLabel = !hasChg
+    ? "(optional)"
+    : chgValues.size === 1
+      ? Array.from(chgValues)[0]
+      : "(multiple)";
   const baseLines = [
     `Header: ${pd.header}`,
     `Mode: ${modeLabel}`,
@@ -318,6 +378,7 @@ function renderPreview(pd: ParsedData) {
     const items = overrideEntries
       .map(([ciValue, v]) => {
         const parts: string[] = [];
+        if (v.chg) parts.push(`CHG=${v.chg}`);
         if (v.currentStatus) parts.push(`Status=${v.currentStatus}`);
         if (v.contact) parts.push(`Contact=${v.contact}`);
         if (v.location) parts.push(`Location=${v.location}`);
@@ -328,10 +389,8 @@ function renderPreview(pd: ParsedData) {
       })
       .filter((v): v is string => Boolean(v));
     if (items.length) {
-      const limit = 10;
       overrideLines.push(`Overrides: ${items.length}`);
-      overrideLines.push(...items.slice(0, limit));
-      if (items.length > limit) overrideLines.push(`... (+${items.length - limit} more)`);
+      overrideLines.push(...items);
     }
   }
 
@@ -424,10 +483,19 @@ runBtn.addEventListener("click", async () => {
   await chrome.runtime.sendMessage({ type: "SET_RUNNING", value: true });
   showToast("กำลังเปิดหน้ารายการ Task CI...", "info");
 
-  chrome.runtime.sendMessage({ type: "RUN_UPDATE", data: parsed }, (res) => {
-    if (res?.ok) showToast("เปิดหน้ารายการแล้ว", "success");
-    else showToast("เกิดข้อผิดพลาด: " + (res?.error || "unknown"), "error");
-  });
+  const activeTab = await getActiveTab();
+  chrome.runtime.sendMessage(
+    {
+      type: "RUN_UPDATE",
+      data: parsed,
+      originTabId: activeTab?.id ?? null,
+      originWindowId: activeTab?.windowId ?? null,
+    },
+    (res) => {
+      if (res?.ok) showToast("เปิดหน้ารายการแล้ว", "success");
+      else showToast("เกิดข้อผิดพลาด: " + (res?.error || "unknown"), "error");
+    }
+  );
 });
 
 stopBtn.addEventListener("click", async () => {
@@ -447,6 +515,9 @@ resetBtn?.addEventListener("click", async () => {
       "ciUpdaterOnlyAffect",
       "ciUpdaterOnlyUpdate",
       "ciUpdaterTiming",
+      "ciUpdaterOutlookWatch",
+      "ciUpdaterOutlookAutoRun",
+      "ciUpdaterOutlookOnlyUnread",
     ];
     const all = await chrome.storage.local.get(null as any);
     const keys = Object.keys(all || {});

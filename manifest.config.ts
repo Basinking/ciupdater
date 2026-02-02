@@ -3,7 +3,7 @@ import { defineManifest } from "@crxjs/vite-plugin";
 export default defineManifest({
   manifest_version: 3,
   name: "CI Updater Dev Team",
-  version: "2.0.0.1",
+  version: "2.1.0.0",
   description: "Service Auto Update",
   // ใช้โลโก้ที่เตรียมไว้เป็นไอคอนของส่วนขยาย
   icons: {

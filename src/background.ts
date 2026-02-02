@@ -2,7 +2,12 @@
 import type { ParsedData, CiOverride } from "./common";
 
 type Messages =
-  | { type: "RUN_UPDATE"; data: ParsedData }
+  | {
+      type: "RUN_UPDATE";
+      data: ParsedData;
+      originTabId?: number | null;
+      originWindowId?: number | null;
+    }
   | { type: "OPEN_ADD_PAGE" }
   | { type: "STOP_NOW" }
   | { type: "SET_RUNNING"; value: boolean }
@@ -10,8 +15,11 @@ type Messages =
   | { type: "REQUEST_LIST_RETRY"; runId?: string; reason?: string };
 
 let workerTabId: number | null = null;
+let originTabId: number | null = null;
+let originWindowId: number | null = null;
 const NEXT_CI_ALARM = "ci-updater-next-ci";
 const LIST_RETRY_ALARM = "ci-updater-list-retry";
+const ORIGIN_KEY = "ciUpdaterOrigin";
 const RUN_STATE_KEYS = [
   "ciUpdaterQueue",
   "ciUpdaterBase",
@@ -71,6 +79,10 @@ chrome.runtime.onMessage.addListener((msg: Messages, _sender, sendResponse) => {
       }
 
       if (msg.type === "RUN_UPDATE") {
+        await rememberOrigin(
+          msg.originTabId ?? _sender?.tab?.id ?? null,
+          msg.originWindowId ?? _sender?.tab?.windowId ?? null
+        );
         const { data } = msg;
         // Before preparing new data, reset any stale queue/info
         await clearRunState();
@@ -219,6 +231,42 @@ async function openOrReuseTab(url: string) {
   if (tab.id != null) workerTabId = tab.id;
 }
 
+async function rememberOrigin(tabId?: number | null, windowId?: number | null) {
+  if (!tabId) return;
+  originTabId = tabId;
+  originWindowId = windowId ?? null;
+  try {
+    await chrome.storage.local.set({
+      [ORIGIN_KEY]: { tabId: originTabId, windowId: originWindowId },
+    });
+  } catch {}
+}
+
+async function returnToOriginTab() {
+  let tabId = originTabId;
+  let windowId = originWindowId;
+  if (!tabId) {
+    try {
+      const { [ORIGIN_KEY]: origin } = await chrome.storage.local.get(ORIGIN_KEY);
+      tabId = origin?.tabId ?? null;
+      windowId = origin?.windowId ?? null;
+    } catch {}
+  }
+  if (!tabId) return;
+  try {
+    if (windowId) await chrome.windows.update(windowId, { focused: true });
+    await chrome.tabs.update(tabId, { active: true });
+  } catch {}
+  originTabId = null;
+  originWindowId = null;
+  try { await chrome.storage.local.remove(ORIGIN_KEY); } catch {}
+}
+
+async function finishRunAndReturn() {
+  await setRunning(false);
+  await returnToOriginTab();
+}
+
 async function setCurrentCiIndex(index: number, runId?: string) {
   const { ciUpdaterQueue, ciUpdaterBase, ciUpdaterRunId } =
     await chrome.storage.local.get(["ciUpdaterQueue", "ciUpdaterBase", "ciUpdaterRunId"]);
@@ -262,7 +310,7 @@ async function handleFinishedOne(runId?: string) {
   if (q?.runId && ciUpdaterRunId && q.runId !== ciUpdaterRunId) return;
   if (!q || !Array.isArray(q.cis) || q.cis.length === 0) {
     // single CI flow: just stop
-    await setRunning(false);
+    await finishRunAndReturn();
     return;
   }
   const next = q.index + 1;
@@ -273,10 +321,10 @@ async function handleFinishedOne(runId?: string) {
         await scheduleNextCi(0, ciUpdaterRunId || runId);
         return;
       }
-      await setRunning(false);
+      await finishRunAndReturn();
       return;
     }
-    await setRunning(false);
+    await finishRunAndReturn();
     return;
   }
   await scheduleNextCi(next, ciUpdaterRunId || runId);

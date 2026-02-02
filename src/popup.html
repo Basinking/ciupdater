@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
   <head>
     <meta charset="utf-8" />
@@ -6,75 +6,254 @@
     <link rel="stylesheet" href="./popup.css" />
   </head>
   <body>
-    <h3>Ricoh ServiceNow CI Updater V2.0.0.1</h3>
-    <label style="font-size:12px;margin-bottom:4px;display:block">เลือกไฟล์ .txt หรือวางข้อความด้านล่าง</label>
+    <h3>Ricoh ServiceNow CI Updater V2.1.0.0</h3>
+    <label style="font-size: 12px; margin-bottom: 4px; display: block"
+      >เลือกไฟล์ .txt หรือวางข้อความด้านล่าง</label
+    >
     <input type="file" id="file" accept=".txt" />
-    <div style="margin:6px 0; text-align:center; font-size:12px; color:#666">หรือ</div>
-    <textarea id="textInput" placeholder="วางข้อความที่นี่..." rows="6" style="width:100%; box-sizing:border-box"></textarea>
-    <button id="outlookBtn" type="button" class="btn-secondary">ดึงจาก Outlook Web (เมลที่เปิดอยู่)</button>
-    <div style="margin:8px 0; font-size:12px; display:flex; align-items:center; gap:8px">
+    <div
+      style="margin: 6px 0; text-align: center; font-size: 12px; color: #666"
+    >
+      หรือ
+    </div>
+    <textarea
+      id="textInput"
+      placeholder="วางข้อความที่นี่..."
+      rows="6"
+      style="width: 100%; box-sizing: border-box"
+    ></textarea>
+    <button id="outlookBtn" type="button" class="btn-secondary">
+      ดึงจาก Outlook Web (เมลที่เปิดอยู่)
+    </button>
+    <div style="margin: 8px 0 2px; font-size: 12px; font-weight: 600">
+      Outlook Auto Watch
+    </div>
+
+    <div
+      style="
+        margin: 4px 0;
+        font-size: 12px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      "
+    >
+      <input type="checkbox" id="outlookWatch" />
+      <label for="outlookWatch" style="user-select: none">
+        เริ่มเฝ้าดู Update CI (ต้องเปิด Outlook Web อยู่)
+      </label>
+    </div>
+
+    <div
+      style="
+        margin: 4px 0;
+        font-size: 12px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      "
+    >
+      <input type="checkbox" id="outlookAutoRun" />
+      <label for="outlookAutoRun" style="user-select: none">
+        Auto-run ตอนเช้า (ทำงานอัตโนมัติ)
+      </label>
+    </div>
+
+    <div
+      style="
+        margin: 4px 0 8px;
+        font-size: 12px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      "
+    >
+      <input type="checkbox" id="outlookOnlyUnread" />
+      <label for="outlookOnlyUnread" style="user-select: none">
+        เฉพาะอีเมลที่ยังไม่ได้อ่าน (ตัวหนังสือสีแดง)
+      </label>
+    </div>
+
+    <div
+      style="
+        margin: 8px 0;
+        font-size: 12px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      "
+    >
       <input type="checkbox" id="testMode" />
-      <label for="testMode" style="user-select:none">Test Mode (ไม่กด Update)</label>
+      <label for="testMode" style="user-select: none"
+        >Test Mode (ไม่กด Update)</label
+      >
     </div>
-    <div style="margin:6px 0; font-size:12px; display:flex; align-items:center; gap:8px">
+    <div
+      style="
+        margin: 6px 0;
+        font-size: 12px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      "
+    >
       <input type="checkbox" id="addComments" />
-      <label for="addComments" style="user-select:none">เพิ่ม Comments (CHG + Note)</label>
+      <label for="addComments" style="user-select: none"
+        >เพิ่ม Comments (CHG + Note)</label
+      >
     </div>
-    <div style="margin:6px 0; font-size:12px; display:flex; align-items:center; gap:8px">
+    <div
+      style="
+        margin: 6px 0;
+        font-size: 12px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      "
+    >
       <input type="checkbox" id="affectFirst" />
-      <label for="affectFirst" style="user-select:none">Affect CI ก่อน Update (หลาย CI)</label>
+      <label for="affectFirst" style="user-select: none"
+        >Affect CI ก่อน Update (หลาย CI)</label
+      >
     </div>
-    <div style="margin:6px 0; font-size:12px; display:flex; align-items:center; gap:8px">
+    <div
+      style="
+        margin: 6px 0;
+        font-size: 12px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      "
+    >
       <input type="checkbox" id="affectOnly" />
-      <label for="affectOnly" style="user-select:none">ทำเฉพาะ Affect (ไม่ Update CI Data)</label>
+      <label for="affectOnly" style="user-select: none"
+        >ทำเฉพาะ Affect (ไม่ Update CI Data)</label
+      >
     </div>
-    <div style="margin:6px 0; font-size:12px; display:flex; align-items:center; gap:8px">
+    <div
+      style="
+        margin: 6px 0;
+        font-size: 12px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      "
+    >
       <input type="checkbox" id="updateOnly" />
-      <label for="updateOnly" style="user-select:none">ทำเฉพาะ Update CI Data (ไม่ Affect)</label>
+      <label for="updateOnly" style="user-select: none"
+        >ทำเฉพาะ Update CI Data (ไม่ Affect)</label
+      >
     </div>
-    <button id="toggleTimingBtn" type="button" class="btn-secondary">แสดงการตั้งค่า Timing (ms)</button>
-    <div id="timingSection" style="margin:8px 0; font-size:12px; border-top:1px solid #eee; padding-top:8px">
-      <div style="font-weight:600; margin-bottom:6px">Timing (ms)</div>
-      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px 8px">
+    <button id="toggleTimingBtn" type="button" class="btn-secondary">
+      แสดงการตั้งค่า Timing (ms)
+    </button>
+    <div
+      id="timingSection"
+      style="
+        margin: 8px 0;
+        font-size: 12px;
+        border-top: 1px solid #eee;
+        padding-top: 8px;
+      "
+    >
+      <div style="font-weight: 600; margin-bottom: 6px">Timing (ms)</div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px 8px">
         <div>
-          <label for="timingBetween" style="display:block; margin-bottom:2px">Between CI</label>
-          <input type="number" id="timingBetween" min="500" step="100" style="width:100%; box-sizing:border-box" />
+          <label for="timingBetween" style="display: block; margin-bottom: 2px"
+            >Between CI</label
+          >
+          <input
+            type="number"
+            id="timingBetween"
+            min="500"
+            step="100"
+            style="width: 100%; box-sizing: border-box"
+          />
         </div>
         <div>
-          <label for="timingInitial" style="display:block; margin-bottom:2px">Initial Delay</label>
-          <input type="number" id="timingInitial" min="0" step="50" style="width:100%; box-sizing:border-box" />
+          <label for="timingInitial" style="display: block; margin-bottom: 2px"
+            >Initial Delay</label
+          >
+          <input
+            type="number"
+            id="timingInitial"
+            min="0"
+            step="50"
+            style="width: 100%; box-sizing: border-box"
+          />
         </div>
         <div>
-          <label for="timingTableWait" style="display:block; margin-bottom:2px">Table Wait</label>
-          <input type="number" id="timingTableWait" min="500" step="100" style="width:100%; box-sizing:border-box" />
+          <label
+            for="timingTableWait"
+            style="display: block; margin-bottom: 2px"
+            >Table Wait</label
+          >
+          <input
+            type="number"
+            id="timingTableWait"
+            min="500"
+            step="100"
+            style="width: 100%; box-sizing: border-box"
+          />
         </div>
         <div>
-          <label for="timingScan" style="display:block; margin-bottom:2px">Scan Budget</label>
-          <input type="number" id="timingScan" min="500" step="100" style="width:100%; box-sizing:border-box" />
+          <label for="timingScan" style="display: block; margin-bottom: 2px"
+            >Scan Budget</label
+          >
+          <input
+            type="number"
+            id="timingScan"
+            min="500"
+            step="100"
+            style="width: 100%; box-sizing: border-box"
+          />
         </div>
         <div>
-          <label for="timingObserver" style="display:block; margin-bottom:2px">Observer Budget</label>
-          <input type="number" id="timingObserver" min="500" step="100" style="width:100%; box-sizing:border-box" />
+          <label for="timingObserver" style="display: block; margin-bottom: 2px"
+            >Observer Budget</label
+          >
+          <input
+            type="number"
+            id="timingObserver"
+            min="500"
+            step="100"
+            style="width: 100%; box-sizing: border-box"
+          />
         </div>
         <div>
-          <label for="timingPoll" style="display:block; margin-bottom:2px">Poll</label>
-          <input type="number" id="timingPoll" min="30" step="10" style="width:100%; box-sizing:border-box" />
+          <label for="timingPoll" style="display: block; margin-bottom: 2px"
+            >Poll</label
+          >
+          <input
+            type="number"
+            id="timingPoll"
+            min="30"
+            step="10"
+            style="width: 100%; box-sizing: border-box"
+          />
         </div>
       </div>
-      <div style="margin-top:6px; display:flex; gap:6px">
+      <div style="margin-top: 6px; display: flex; gap: 6px">
         <button id="saveTimingBtn" type="button">Save Timing</button>
         <button id="resetTimingBtn" type="button">Reset Timing</button>
       </div>
-      <div style="margin-top:4px; color:#666">เว้นว่าง = ใช้ค่าเริ่มต้น</div>
+      <div style="margin-top: 4px; color: #666">เว้นว่าง = ใช้ค่าเริ่มต้น</div>
     </div>
     <button id="parseBtn">Parse Text</button>
     <div id="preview"></div>
     <button id="runBtn" disabled>Start</button>
     <button id="stopBtn">Stop</button>
-    <button id="resetBtn" title="ล้างข้อมูลการทำงานทั้งหมด ยกเว้นตัวเลือกที่ตั้งไว้">Reset Data</button>
+    <button
+      id="resetBtn"
+      title="ล้างข้อมูลการทำงานทั้งหมด ยกเว้นตัวเลือกที่ตั้งไว้"
+    >
+      Reset Data
+    </button>
     <div id="toast-container"></div>
     <div id="status"></div>
-    <div id="copyright">&copy; 2025 Developer Team from RICOH (THAILAND) CO., LTD</div>
+    <div id="copyright">
+      &copy; 2025 Developer Team from RICOH (THAILAND) CO., LTD
+    </div>
 
     <script type="module" src="./popup.ts"></script>
   </body>

@@ -25,6 +25,8 @@ export function setInputValue(el: HTMLInputElement, value: string) {
 export function cleanContactName(nameRaw: string): string {
   if (!nameRaw) return "";
   let s = nameRaw.trim();
+  // Normalize common unicode dashes to ASCII hyphen
+  s = s.replace(/[‐‑–—−]/g, "-");
   // ตัดอักขระนำหน้าเช่น ":", "：", "-", "–", "—", จุด bullet
   s = s.replace(/^[\s]*[:：\-–—•·]+\s*/u, "");
   // ตัดคำนำหน้าที่พบบ่อย (ไทย/อังกฤษย่อ)
@@ -35,25 +37,43 @@ export function cleanContactName(nameRaw: string): string {
   s = s.replace(/^K[.\s]\s*/i, "");
 
   // เอาตัวเลขและสัญลักษณ์ออก ให้เหลือเฉพาะตัวอักษรอังกฤษและช่องว่าง
-  s = s.replace(/[^A-Za-z\s]+/g, " ");
+  s = s.replace(/[^A-Za-z\s-]+/g, " ");
+  s = s.replace(/\s*-\s*/g, "-");
   s = s.replace(/\s+/g, " ").trim();
+  s = s.replace(/-+$/g, "").trim();
 
   // กรณีผู้ใช้กรอก IT Stock (ตัวเล็ก/ใหญ่ ไม่สำคัญ) โดยไม่มี RTH นำหน้า
-  if (/^it\s*stock$/i.test(s)) {
+  if (/^it[-\s]*stock$/i.test(s)) {
     s = "RTH IT Stock";
   }
 
   return s.trim();
 }
 
-function normalizeCurrentStatus(statusRaw: string): string {
+export function normalizeCurrentStatus(statusRaw: string): string {
   let v = (statusRaw || "").trim();
   if (!v) return "";
   v = v.replace(/\s+/g, " ").trim();
-  if (/\binstock\b/i.test(v) || /^in\s*stock$/i.test(v)) {
-    v = v.replace(/\binstock\b/ig, "In Stock");
-    if (/^in\s*stock$/i.test(v)) v = "In Stock";
-  }
+  const compact = v.toLowerCase().replace(/[^a-z]+/g, " ").trim();
+  const packed = compact.replace(/\s+/g, "");
+  const starts = (token: string) => packed.startsWith(token);
+
+  if (starts("pendinginstall")) return "Pending Install";
+  if (starts("pendingrepair")) return "Pending Repair";
+  if (starts("instock")) return "In Stock";
+  if (
+    starts("inmaintenance") ||
+    starts("inmaint") ||
+    starts("maintenance") ||
+    starts("maint")
+  )
+    return "In Maintenance";
+  if (starts("installed") || packed === "install") return "Installed";
+  if (starts("onorder") || packed === "order") return "On Order";
+  if (starts("absent") || starts("absence") || starts("absense")) return "Absent";
+  if (starts("retired") || starts("retire")) return "Retired";
+  if (starts("stolen") || starts("stoln")) return "Stolen";
+
   return v;
 }
 
@@ -135,6 +155,7 @@ export interface CiOverride {
   contact?: string;
   location?: string;
   otherDesc?: string;
+  chg?: string;
 }
 
 export interface ParsedData {
@@ -198,12 +219,23 @@ export function parseTxtContent(text: string): ParsedData {
   ];
 
   const isSectionHeader = (line: string) => /^\d+\s*[.)]?$/.test(line);
+  const extractChg = (line: string) => {
+    const m = line.match(
+      /^\s*(?:\d+\s*[.)]?\s*)?(?:Change\s*#?\s*[:\-]?\s*)?(CHG\d+)\b/i
+    );
+    return m ? m[1].toUpperCase() : "";
+  };
   const extractCis = (line: string) =>
     Array.from(line.matchAll(/CI-\d+/gi)).map((m) => m[0].toUpperCase());
   const hasAnyField = (data: CiOverride | null | undefined) =>
     !!data &&
     Object.values(data).some(
       (v) => typeof v === "string" && v.trim().length > 0
+    );
+  const hasNonChgField = (data: CiOverride | null | undefined) =>
+    !!data &&
+    Object.entries(data).some(
+      ([k, v]) => k !== "chg" && typeof v === "string" && v.trim().length > 0
     );
 
   const orderedCis: string[] = [];
@@ -247,9 +279,28 @@ export function parseTxtContent(text: string): ParsedData {
       continue;
     }
 
+    const chgInLine = extractChg(line);
+    if (chgInLine) {
+      const hasBlockFields = current && hasNonChgField(current.data);
+      const chgConflict =
+        current &&
+        current.data.chg &&
+        current.data.chg.toUpperCase() !== chgInLine.toUpperCase();
+      if (current && (hasBlockFields || chgConflict)) {
+        applyCurrentBlock();
+        current = null;
+        pending = null;
+      }
+      if (current) {
+        current.data.chg = chgInLine;
+      } else {
+        pending = { ...(pending || {}), chg: chgInLine };
+      }
+    }
+
     const cisInLine = extractCis(line);
     if (cisInLine.length) {
-      if (current && hasAnyField(current.data)) {
+      if (current && hasNonChgField(current.data)) {
         applyCurrentBlock();
       }
       if (!current) current = { cis: [], data: {} };
@@ -275,8 +326,9 @@ export function parseTxtContent(text: string): ParsedData {
   applyCurrentBlock();
 
   // ดึง CHG จากทั้งเอกสาร รองรับ "Change #CHG0039650" หรือรูปแบบอื่น ๆ
-  const chgMatch = whole.match(/CHG\d+/i);
-  const chg = chgMatch ? chgMatch[0].toUpperCase() : "";
+  const chgAll = Array.from(whole.matchAll(/CHG\d+/gi)).map(m => m[0].toUpperCase());
+  const chgUnique = Array.from(new Set(chgAll));
+  const chg = chgUnique.length === 1 ? chgUnique[0] : (chgUnique[0] || "");
 
   // ดึง CI ทั้งหมดจากเอกสาร เช่น "CI-191003" รองรับหลายบรรทัด
   const ciAll = Array.from(whole.matchAll(/CI-\d+/gi)).map(m => m[0].toUpperCase());

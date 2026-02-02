@@ -5,6 +5,7 @@ import {
   sleep,
   cleanContactName,
   showPageToast,
+  normalizeCurrentStatus,
 } from "./common";
 const log = (...args: any[]) => console.log("[CI Updater][CI-Form]", ...args);
 
@@ -76,7 +77,7 @@ function byIdPrefixSuffix<T extends Element>(
 function mapInstallStatus(valueRaw: string): string | null {
   const raw = (valueRaw || "").trim();
   if (/\bscrap(?:ped)?\b/i.test(raw)) return "7";
-  let v = raw;
+  let v = normalizeCurrentStatus(raw) || raw;
   // ตัดอักขระนำหน้าแปลก ๆ เช่น ":" หรือ "-" แล้ว normalize lower-case
   v = v
     .replace(/^[^A-Za-z0-9]+/, "")
@@ -186,10 +187,6 @@ function fieldCandidates(
   if (semantic === "owned_by")
     base = [
       "owned_by",
-      "u_owned_by",
-      "assigned_to",
-      "u_assigned_to",
-      "u_owner",
     ];
   // tweaks per class (extend if needed) — apply only for the relevant semantic
   if (semantic === "location") {
