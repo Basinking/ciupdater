@@ -36,6 +36,9 @@ export function cleanContactName(nameRaw: string): string {
   s = s.replace(/^Ms\.?\s*/i, "");
   s = s.replace(/^K[.\s]\s*/i, "");
 
+  // Strip trailing employee codes like "R650036" or "R 650036"
+  s = s.replace(/\s+[Rr]\s*[-_]?\s*\d+\s*$/u, "");
+
   // เอาตัวเลขและสัญลักษณ์ออก ให้เหลือเฉพาะตัวอักษรอังกฤษและช่องว่าง
   s = s.replace(/[^A-Za-z\s-]+/g, " ");
   s = s.replace(/\s*-\s*/g, "-");
