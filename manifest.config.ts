@@ -63,6 +63,18 @@ export default defineManifest({
       js: ["src/common.ts", "src/content-ci-form.ts"],
       run_at: "document_idle",
       all_frames: true
+    },
+    {
+      matches: ["https://ricohap.service-now.com/*change_request.do*"],
+      js: ["src/common.ts", "src/content-change-request.ts"],
+      run_at: "document_idle",
+      all_frames: true
+    },
+    {
+      matches: ["https://ricohap.service-now.com/*change_task.do*"],
+      js: ["src/common.ts", "src/content-change-task.ts"],
+      run_at: "document_idle",
+      all_frames: true
     }
   ],
   commands: {

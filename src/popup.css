@@ -105,6 +105,17 @@ textarea#textInput {
   box-shadow: var(--shadow);
 }
 
+textarea#closeNotesText {
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  font-size: 12px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--fg);
+  box-shadow: var(--shadow);
+}
+
 /* Toast Container - Popup UI */
 #toast-container {
   position: fixed;

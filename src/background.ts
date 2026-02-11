@@ -12,6 +12,7 @@ type Messages =
   | { type: "STOP_NOW" }
   | { type: "SET_RUNNING"; value: boolean }
   | { type: "FINISHED_ONE"; runId?: string }
+  | { type: "CLOSE_TASK_DONE"; runId?: string; resumeIndex?: number }
   | { type: "REQUEST_LIST_RETRY"; runId?: string; reason?: string };
 
 let workerTabId: number | null = null;
@@ -28,6 +29,7 @@ const RUN_STATE_KEYS = [
   "ciUpdaterNext",
   "ciUpdaterRetry",
   "ciUpdaterPhase",
+  "ciUpdaterClosing",
   "ciUpdaterFormDone",
 ];
 
@@ -47,6 +49,32 @@ function applyCiOverrides(base: ParsedData, ciRaw: string): ParsedData {
   const override: CiOverride | undefined = base.ciOverrides?.[ci];
   if (!override) return { ...base, ci };
   return { ...base, ...override, ci };
+}
+
+function normalizeChgKey(value?: string | null): string {
+  return (value || "").trim().toUpperCase();
+}
+
+function collectSkipCloseChgs(
+  base?: ParsedData,
+  data?: ParsedData
+): Set<string> {
+  const set = new Set<string>();
+  const addList = (list?: string[]) => {
+    if (!Array.isArray(list)) return;
+    for (const item of list) {
+      const key = normalizeChgKey(item);
+      if (key) set.add(key);
+    }
+  };
+  addList(base?.addCiChgs);
+  addList(data?.addCiChgs);
+  return set;
+}
+
+function shouldSkipCloseForChg(chg: string, skipSet: Set<string>): boolean {
+  const key = normalizeChgKey(chg);
+  return !!key && skipSet.has(key);
 }
 
 chrome.tabs.onRemoved.addListener((tabId) => {
@@ -140,6 +168,12 @@ chrome.runtime.onMessage.addListener((msg: Messages, _sender, sendResponse) => {
 
       if (msg.type === "REQUEST_LIST_RETRY") {
         await handleListRetryRequest(msg.runId, msg.reason);
+        sendResponse({ ok: true });
+        return;
+      }
+
+      if (msg.type === "CLOSE_TASK_DONE") {
+        await handleCloseTaskDone(msg.runId, msg.resumeIndex);
         sendResponse({ ok: true });
         return;
       }
@@ -294,22 +328,39 @@ async function handleFinishedOne(runId?: string) {
     ciUpdaterPhase,
     ciUpdaterOnlyAffect,
     ciUpdaterOnlyUpdate,
+    ciUpdaterAutoClose,
   } = await chrome.storage.local.get([
     "isRunning",
     "ciUpdaterRunId",
     "ciUpdaterPhase",
     "ciUpdaterOnlyAffect",
     "ciUpdaterOnlyUpdate",
+    "ciUpdaterAutoClose",
   ]);
   const onlyAffect = ciUpdaterOnlyAffect === true;
   const onlyUpdate = !onlyAffect && ciUpdaterOnlyUpdate === true;
+  const autoClose = ciUpdaterAutoClose === false ? false : true;
   if (isRunning === false) return;
   if (runId && ciUpdaterRunId && runId !== ciUpdaterRunId) return;
-  const { ciUpdaterQueue } = await chrome.storage.local.get("ciUpdaterQueue");
+  const { ciUpdaterQueue, ciUpdaterData, ciUpdaterBase } = await chrome.storage.local.get([
+    "ciUpdaterQueue",
+    "ciUpdaterData",
+    "ciUpdaterBase",
+  ]);
   const q = ciUpdaterQueue as { cis: string[]; index: number; runId?: string } | undefined;
   if (q?.runId && ciUpdaterRunId && q.runId !== ciUpdaterRunId) return;
+  const base = (ciUpdaterBase || {}) as ParsedData;
+  const currentData = (ciUpdaterData || {}) as ParsedData;
+  const skipCloseChgs = collectSkipCloseChgs(base, currentData);
   if (!q || !Array.isArray(q.cis) || q.cis.length === 0) {
     // single CI flow: just stop
+    if (!onlyAffect && autoClose) {
+      const chgKey = normalizeChgKey(currentData.chg);
+      if (!shouldSkipCloseForChg(chgKey, skipCloseChgs)) {
+        const started = await startClosePhase(ciUpdaterRunId || runId);
+        if (started) return;
+      }
+    }
     await finishRunAndReturn();
     return;
   }
@@ -324,12 +375,97 @@ async function handleFinishedOne(runId?: string) {
       await finishRunAndReturn();
       return;
     }
+    if (!onlyAffect && autoClose) {
+      const chgKey = normalizeChgKey(currentData.chg);
+      if (!shouldSkipCloseForChg(chgKey, skipCloseChgs)) {
+        const started = await startClosePhase(ciUpdaterRunId || runId);
+        if (started) return;
+      }
+    }
     await finishRunAndReturn();
     return;
+  }
+  // If CHG changes between items (update phase), close current CHG before moving on
+  if (autoClose && ciUpdaterPhase !== "affect") {
+    try {
+      const currentChg = (currentData.chg || "").trim().toUpperCase();
+      const nextCi = q.cis[next] || "";
+      const nextData = applyCiOverrides(
+        { ...base, runId: ciUpdaterRunId || runId } as ParsedData,
+        nextCi
+      );
+      const nextChg = (nextData.chg || "").trim().toUpperCase();
+      if (currentChg && currentChg !== nextChg) {
+        if (!shouldSkipCloseForChg(currentChg, skipCloseChgs)) {
+          const started = await startClosePhase(ciUpdaterRunId || runId, next);
+          if (started) return;
+        }
+      }
+    } catch (e) {
+      console.warn("[CI Updater] close boundary check failed:", e);
+    }
   }
   await scheduleNextCi(next, ciUpdaterRunId || runId);
 }
 
+async function startClosePhase(
+  runId?: string,
+  resumeIndex?: number
+): Promise<boolean> {
+  try {
+    try {
+      const { ciUpdaterAutoClose } = await chrome.storage.local.get("ciUpdaterAutoClose");
+      if (ciUpdaterAutoClose === false) return false;
+    } catch {}
+    const {
+      ciUpdaterRunId,
+      ciUpdaterClosing,
+      ciUpdaterData,
+      ciUpdaterQueue,
+    } = await chrome.storage.local.get([
+      "ciUpdaterRunId",
+      "ciUpdaterClosing",
+      "ciUpdaterData",
+      "ciUpdaterQueue",
+    ]);
+
+    if (ciUpdaterClosing?.runId && ciUpdaterRunId && ciUpdaterClosing.runId === ciUpdaterRunId) {
+      return true; // already in close phase
+    }
+
+    const data = (ciUpdaterData || {}) as ParsedData;
+    const chg = (data.chg || "").trim();
+    if (!chg) return false;
+
+    const q = ciUpdaterQueue as { cis?: string[] } | undefined;
+    const ci = (data.ci || q?.cis?.[0] || "").trim();
+
+    try {
+      await chrome.alarms.clear(NEXT_CI_ALARM);
+      await chrome.alarms.clear(LIST_RETRY_ALARM);
+    } catch {}
+    try {
+      await chrome.storage.local.remove(["ciUpdaterNext", "ciUpdaterRetry"]);
+    } catch {}
+
+    await chrome.storage.local.set({
+      ciUpdaterClosing: {
+        runId: ciUpdaterRunId || runId,
+        ci,
+        chg,
+        ts: Date.now(),
+        ...(Number.isFinite(resumeIndex) ? { resumeIndex } : {}),
+      },
+    });
+
+    const listUrl = makeListUrl(ci, chg);
+    await openOrReuseTab(listUrl);
+    return true;
+  } catch (e) {
+    console.error("[CI Updater] startClosePhase error", e);
+    return false;
+  }
+}
 async function setRunning(value: boolean) {
   await chrome.storage.local.set({ isRunning: value });
   if (!value) {
@@ -433,6 +569,39 @@ async function handleListRetryAlarm() {
 
   const listUrl = makeListUrl(data.ci, data.chg);
   await openOrReuseTab(listUrl);
+}
+
+async function handleCloseTaskDone(runId?: string, resumeIndex?: number) {
+  try {
+    const {
+      ciUpdaterRunId,
+      ciUpdaterClosing,
+      isRunning,
+    } = await chrome.storage.local.get([
+      "ciUpdaterRunId",
+      "ciUpdaterClosing",
+      "isRunning",
+    ]);
+    if (isRunning === false) return;
+    if (runId && ciUpdaterRunId && runId !== ciUpdaterRunId) return;
+    const closing = (ciUpdaterClosing || {}) as { runId?: string; resumeIndex?: number };
+    if (closing.runId && ciUpdaterRunId && closing.runId !== ciUpdaterRunId) return;
+
+    const idxRaw =
+      typeof resumeIndex === "number"
+        ? resumeIndex
+        : typeof closing.resumeIndex === "number"
+          ? closing.resumeIndex
+          : NaN;
+    if (!Number.isFinite(idxRaw)) return;
+
+    try {
+      await chrome.storage.local.remove("ciUpdaterClosing");
+    } catch {}
+    await scheduleNextCi(idxRaw, ciUpdaterRunId || runId);
+  } catch (e) {
+    console.error("[CI Updater] handleCloseTaskDone error", e);
+  }
 }
 
 async function resetOnStartup() {

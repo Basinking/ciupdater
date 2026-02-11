@@ -14,9 +14,11 @@ const outlookOnlyUnreadEl = document.getElementById("outlookOnlyUnread") as HTML
 const statusEl = document.getElementById("status") as HTMLDivElement;
 const testModeEl = document.getElementById("testMode") as HTMLInputElement | null;
 const addCommentsEl = document.getElementById("addComments") as HTMLInputElement | null;
+const autoCloseEl = document.getElementById("autoClose") as HTMLInputElement | null;
 const affectFirstEl = document.getElementById("affectFirst") as HTMLInputElement | null;
 const affectOnlyEl = document.getElementById("affectOnly") as HTMLInputElement | null;
 const updateOnlyEl = document.getElementById("updateOnly") as HTMLInputElement | null;
+const closeNotesEl = document.getElementById("closeNotesText") as HTMLTextAreaElement | null;
 const toggleTimingBtn = document.getElementById("toggleTimingBtn") as HTMLButtonElement | null;
 const timingSectionEl = document.getElementById("timingSection") as HTMLDivElement | null;
 const timingBetweenEl = document.getElementById("timingBetween") as HTMLInputElement | null;
@@ -36,6 +38,7 @@ const DEFAULT_TIMING = {
   observerBudgetMs: 3200,
   betweenCiDelayMs: 3000,
 };
+const DEFAULT_CLOSE_NOTES = "Update CI เรียบร้อยครับ";
 
 function showToast(message: string, type: "success" | "error" | "info" = "info") {
   const container = document.getElementById("toast-container")!;
@@ -217,6 +220,42 @@ testModeEl?.addEventListener("change", async () => {
 addCommentsEl?.addEventListener("change", async () => {
   try {
     await chrome.storage.local.set({ ciUpdaterAddComments: !!addCommentsEl.checked });
+  } catch {}
+});
+
+// init auto close toggle (default true)
+(async () => {
+  try {
+    if (!autoCloseEl) return;
+    const res = await chrome.storage.local.get("ciUpdaterAutoClose");
+    const hasKey = Object.prototype.hasOwnProperty.call(res, "ciUpdaterAutoClose");
+    autoCloseEl.checked = hasKey ? !!res.ciUpdaterAutoClose : true;
+  } catch {}
+})();
+
+// persist on change
+autoCloseEl?.addEventListener("change", async () => {
+  try {
+    await chrome.storage.local.set({ ciUpdaterAutoClose: !!autoCloseEl.checked });
+  } catch {}
+});
+
+// init close notes text
+(async () => {
+  try {
+    if (!closeNotesEl) return;
+    const res = await chrome.storage.local.get("ciUpdaterCloseNotes");
+    const hasKey = Object.prototype.hasOwnProperty.call(res, "ciUpdaterCloseNotes");
+    const value = (res.ciUpdaterCloseNotes || "").trim();
+    closeNotesEl.value = hasKey ? value : DEFAULT_CLOSE_NOTES;
+  } catch {}
+})();
+
+// persist close notes on change
+closeNotesEl?.addEventListener("change", async () => {
+  try {
+    const value = (closeNotesEl?.value || "").trim();
+    await chrome.storage.local.set({ ciUpdaterCloseNotes: value });
   } catch {}
 });
 
@@ -469,6 +508,17 @@ runBtn.addEventListener("click", async () => {
   if (addCommentsEl) {
     try { await chrome.storage.local.set({ ciUpdaterAddComments: !!addCommentsEl.checked }); } catch {}
   }
+  // persist auto close setting before running
+  if (autoCloseEl) {
+    try { await chrome.storage.local.set({ ciUpdaterAutoClose: !!autoCloseEl.checked }); } catch {}
+  }
+  // persist close notes before running
+  if (closeNotesEl) {
+    try {
+      const value = (closeNotesEl.value || "").trim();
+      await chrome.storage.local.set({ ciUpdaterCloseNotes: value });
+    } catch {}
+  }
   // persist affect-first setting before running
   if (affectFirstEl) {
     try { await chrome.storage.local.set({ ciUpdaterAffectFirst: !!affectFirstEl.checked }); } catch {}
@@ -511,6 +561,8 @@ resetBtn?.addEventListener("click", async () => {
     const KEEP_KEYS = [
       "ciUpdaterTestMode",
       "ciUpdaterAddComments",
+      "ciUpdaterAutoClose",
+      "ciUpdaterCloseNotes",
       "ciUpdaterAffectFirst",
       "ciUpdaterOnlyAffect",
       "ciUpdaterOnlyUpdate",

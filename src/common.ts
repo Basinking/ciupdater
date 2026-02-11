@@ -169,6 +169,8 @@ export interface ParsedData {
   ci: string;
   cis?: string[];
   ciOverrides?: Record<string, CiOverride>;
+  addCi?: boolean;
+  addCiChgs?: string[];
   currentStatus: string;
   toClient: string;
   contact: string;
@@ -188,6 +190,27 @@ export function parseTxtContent(text: string): ParsedData {
   const rawLines = text.split(/\r?\n/);
   const lines = rawLines.map(normalizeSpaces).filter(Boolean);
   const whole = normalizeSpaces(text);
+  const addCiDetected =
+    /\badd\s+new\s+ci\b/i.test(whole) || /\badd\s+ci\b/i.test(whole);
+  const addCiChgs = new Set<string>();
+  if (addCiDetected) {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!/\badd\s+new\s+ci\b/i.test(line) && !/\badd\s+ci\b/i.test(line))
+        continue;
+      let m = line.match(/CHG\d+/i);
+      if (!m) {
+        for (let j = i + 1; j < Math.min(lines.length, i + 8); j++) {
+          const mj = lines[j].match(/CHG\d+/i);
+          if (mj) {
+            m = mj;
+            break;
+          }
+        }
+      }
+      if (m) addCiChgs.add(m[0].toUpperCase());
+    }
+  }
 
   const labelDefs: Array<{
     key: keyof CiOverride;
@@ -332,6 +355,9 @@ export function parseTxtContent(text: string): ParsedData {
   const chgAll = Array.from(whole.matchAll(/CHG\d+/gi)).map(m => m[0].toUpperCase());
   const chgUnique = Array.from(new Set(chgAll));
   const chg = chgUnique.length === 1 ? chgUnique[0] : (chgUnique[0] || "");
+  if (addCiDetected && addCiChgs.size === 0 && chgUnique.length === 1) {
+    addCiChgs.add(chgUnique[0]);
+  }
 
   // ดึง CI ทั้งหมดจากเอกสาร เช่น "CI-191003" รองรับหลายบรรทัด
   const ciAll = Array.from(whole.matchAll(/CI-\d+/gi)).map(m => m[0].toUpperCase());
@@ -390,6 +416,8 @@ export function parseTxtContent(text: string): ParsedData {
     ci,
     cis,
     ciOverrides: Object.keys(ciOverrides).length > 0 ? ciOverrides : undefined,
+    addCi: addCiDetected || undefined,
+    addCiChgs: addCiChgs.size ? Array.from(addCiChgs) : undefined,
     currentStatus,
     toClient,
     contact,

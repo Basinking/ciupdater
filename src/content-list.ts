@@ -28,6 +28,26 @@ function normalize(s: string) {
   return (s || "").trim().replace(/\s+/g, " ");
 }
 
+function findChgLink(table: HTMLTableElement, chg: string): HTMLAnchorElement | null {
+  const wanted = normalize(chg).toUpperCase();
+  const tbody = table.tBodies?.[0] || table;
+  const rows = Array.from(
+    tbody.querySelectorAll<HTMLTableRowElement>("tr.list_row, tr")
+  ).filter(tr => tr.querySelectorAll("td").length > 0);
+
+  for (const tr of rows) {
+    const anchors = Array.from(tr.querySelectorAll<HTMLAnchorElement>("a"));
+    for (const a of anchors) {
+      const txt = normalize(a.textContent || "").toUpperCase();
+      const href = a.getAttribute("href") || "";
+      if (wanted && txt.startsWith(wanted)) return a;
+      if (!wanted && /^CHG\d+/i.test(txt)) return a;
+      if (!wanted && /task\.do/i.test(href)) return a;
+    }
+  }
+  return null;
+}
+
 function findRowMatch(tr: HTMLTableRowElement, ci: string, chg: string) {
   let ciText = "";
   let chgText = "";
@@ -223,14 +243,68 @@ function requestListRetry(runId?: string, reason?: string) {
   try {
     if (!isRealListPage()) return;
 
-    const { isRunning, ciUpdaterRunId, ciUpdaterPhase, ciUpdaterOnlyUpdate } =
+    const { isRunning, ciUpdaterRunId, ciUpdaterPhase, ciUpdaterOnlyUpdate, ciUpdaterClosing } =
       await chrome.storage.local.get([
         "isRunning",
         "ciUpdaterRunId",
         "ciUpdaterPhase",
         "ciUpdaterOnlyUpdate",
+        "ciUpdaterClosing",
       ]);
     if (isRunning === false) return;
+    const closing = ciUpdaterClosing as { ci?: string; chg?: string; runId?: string; resumeIndex?: number } | undefined;
+    if (
+      closing &&
+      (!closing.runId || !ciUpdaterRunId || closing.runId === ciUpdaterRunId)
+    ) {
+      const timing = await getTiming();
+      await sleep(timing.initialDelayMs);
+      const table = await waitForTableWithBackoff(
+        timing.tableWaitBudgetMs,
+        timing.pollMs
+      );
+      if (!table) {
+        try {
+          showPageToast("ไม่พบตารางเพื่อเปิด CHG", "error", 2000);
+        } catch {}
+        return;
+      }
+      const t0 = Date.now();
+      let link: HTMLAnchorElement | null = null;
+      while (Date.now() - t0 < timing.scanBudgetMs && !link) {
+        link = findChgLink(table, closing.chg || "");
+        if (link) break;
+        await sleep(timing.pollMs);
+      }
+      if (!link) {
+        try {
+          showPageToast("ไม่พบลิงก์ CHG ในตาราง", "error", 2200);
+        } catch {}
+        return;
+      }
+      try {
+        const label = (closing.chg || "").trim();
+        showPageToast(`เปิด ${label || "CHG"} เพื่อปิดงาน`, "info", 2200);
+      } catch {}
+      try {
+        sessionStorage.setItem(
+          "ciUpdaterCloseAction",
+          JSON.stringify({
+            chg: (closing.chg || "").trim(),
+            ts: Date.now(),
+          })
+        );
+      } catch {}
+      link.click();
+      const resumeIndex =
+        typeof closing.resumeIndex === "number" ? closing.resumeIndex : NaN;
+      if (!Number.isFinite(resumeIndex)) {
+        try {
+          await chrome.runtime.sendMessage({ type: "SET_RUNNING", value: false });
+        } catch {}
+      }
+      return;
+    }
     const isAffectPhase = ciUpdaterPhase === "affect";
     const onlyUpdate = ciUpdaterOnlyUpdate === true;
 

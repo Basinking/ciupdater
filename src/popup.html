@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html>
   <head>
     <meta charset="utf-8" />
@@ -101,6 +101,29 @@
       <label for="addComments" style="user-select: none"
         >เพิ่ม Comments (CHG + Note)</label
       >
+    </div>
+    <div
+      style="
+        margin: 6px 0;
+        font-size: 12px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      "
+    >
+      <input type="checkbox" id="autoClose" />
+      <label for="autoClose" style="user-select: none"
+        >Auto Close CHG/Task</label
+      >
+    </div>
+    <div style="margin: 6px 0; font-size: 12px">
+      <label for="closeNotesText" style="display: block; margin-bottom: 4px">Close notes (Change Task)</label>
+      <textarea
+        id="closeNotesText"
+        rows="2"
+        placeholder="Update CI เรียบร้อยครับ"
+        style="width: 100%; box-sizing: border-box"
+      ></textarea>
     </div>
     <div
       style="
@@ -258,3 +281,5 @@
     <script type="module" src="./popup.ts"></script>
   </body>
 </html>
+
+

@@ -9,6 +9,24 @@ import {
 } from "./common";
 const log = (...args: any[]) => console.log("[CI Updater][CI-Form]", ...args);
 
+function hasInvalidReference(root: ParentNode = document): boolean {
+  try {
+    if (root.querySelector(".ref_invalid, input.ref_invalid")) return true;
+    if (root.querySelector('[aria-invalid="true"][title*="Invalid reference"]'))
+      return true;
+    const msgs = Array.from(
+      root.querySelectorAll<HTMLElement>(
+        ".fieldmsg.notification-error, .fieldmsg.notification-error *"
+      )
+    );
+    return msgs.some((el) =>
+      (el.textContent || "").toLowerCase().includes("invalid reference")
+    );
+  } catch {
+    return false;
+  }
+}
+
 function isCIFormPage(): boolean {
   const href = location.href;
   // รองรับทั้งแบบโหลดโดยตรง และผ่าน classic wrapper เช่น
@@ -1072,14 +1090,22 @@ async function setReferenceField(
       }
     };
 
+    const onUpdateClick = async () => {
+      if (hasInvalidReference()) {
+        showPageToast(
+          "ยังมี Invalid reference — กรุณาแก้ไขก่อนกด Update",
+          "error",
+          2600
+        );
+        return;
+      }
+      await markFormDone();
+      await notifyFinished();
+    };
     if (updateBtn) {
-      updateBtn.addEventListener(
-        "click",
-        () => {
-          void notifyFinished();
-        },
-        { once: true }
-      );
+      updateBtn.addEventListener("click", () => {
+        void onUpdateClick();
+      });
     }
 
     // กำลังทดสอบการอัปเดตอัตโนมัติในพื้นหลัง (สำหรับทดสอบ)
@@ -1096,6 +1122,18 @@ async function setReferenceField(
         return; // กรณีทดสอบ: ข้ามการ Update ไม่ต้องคลิกจริง
       }
     } catch {}
+
+    await sleep(200); // allow SN to render field validation
+    const invalidRefDetected = hasInvalidReference();
+    if (invalidRefDetected) {
+      log("Invalid reference detected; pause for manual fix");
+      showPageToast(
+        "พบ Invalid reference — กรุณาแก้ไขด้วยมือ แล้วกด Update เพื่อทำต่อ",
+        "error",
+        3600
+      );
+      return; // wait for user to fix + click Update (listener above will resume)
+    }
 
     log("Click Update button");
     await markFormDone();
