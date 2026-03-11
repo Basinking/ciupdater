@@ -1,4 +1,4 @@
-// src/content-outlook.ts
+﻿// src/content-outlook.ts
 import { parseTxtContent, showPageToast, sleep } from "./common";
 
 type OutlookMessage = { type: "OUTLOOK_GET_EMAIL" };
@@ -42,7 +42,7 @@ function extractBetween(
   stopPatterns: string[]
 ): string {
   const labelRe = new RegExp(
-    `(?:\\b\\d+\\s*[.)]?\\s*)?(?:${labelPattern})\\s*[:：]\\s*`,
+    `(?:\\b\\d+\\s*[.)]?\\s*)?(?:${labelPattern})\\s*[:๏ผ]\\s*`,
     "i"
   );
   const match = labelRe.exec(text);
@@ -51,7 +51,7 @@ function extractBetween(
   let end = rest.length;
   for (const stop of stopPatterns) {
     const stopRe = new RegExp(
-      `\\b\\d+\\s*[.)]?\\s*(?:${stop})\\s*[:：]|\\b(?:${stop})\\s*[:：]`,
+      `\\b\\d+\\s*[.)]?\\s*(?:${stop})\\s*[:๏ผ]|\\b(?:${stop})\\s*[:๏ผ]`,
       "i"
     );
     const m2 = stopRe.exec(rest);
@@ -67,7 +67,7 @@ function findValue(
   stopPatterns: string[]
 ): string {
   const lineRe = new RegExp(
-    `^(?:\\d+\\s*[.)]?\\s*)?(?:${labelPattern})\\s*[:：]?\\s*(.*)$`,
+    `^(?:\\d+\\s*[.)]?\\s*)?(?:${labelPattern})\\s*[:๏ผ]?\\s*(.*)$`,
     "i"
   );
   for (const line of lines) {
@@ -100,14 +100,14 @@ function buildExtractedText(rawText: string, subjectText = ""): string {
   const labelPatterns = {
     currentStatus: "Current\\s*Status|Install\\s*Status|Status",
     toClient: "To\\s*Client",
-    contact: "Contact\\s*Name|Owned\\s*by|Owner\\s*by",
+    contact: "Cont(?:act|ract)\\s*Name|Owned\\s*by|Owner\\s*by",
     location: "Location",
     otherDesc: "Other\\s*Desc\\.?|Other\\s*Description|Other|Note",
   };
   const allStops = [...Object.values(labelPatterns), "CI\\s*Description"];
 
   const countLabel = (pattern: string) => {
-    const re = new RegExp(`^(?:${pattern})\\s*[:：]`, "i");
+    const re = new RegExp(`^(?:${pattern})\\s*[:๏ผ]`, "i");
     let count = 0;
     for (const line of lines) {
       const cleaned = stripLeadingNumber(line);
@@ -332,17 +332,35 @@ function isInUpdateCiFolder(): boolean {
 function getMessageListRoot(): ParentNode {
   return (
     document.querySelector('[data-testid="virtuoso-item-list"]') ||
+    document.querySelector('[data-testid="messageList"]') ||
+    document.querySelector('[aria-label*="Message list" i]') ||
     document.querySelector('[role="listbox"]') ||
+    document.querySelector('[role="list"]') ||
+    document.querySelector('[role="grid"]') ||
     document
   );
 }
 
 function getMessageRows(): HTMLElement[] {
   const root = getMessageListRoot();
-  const rows = Array.from(
-    root.querySelectorAll<HTMLElement>('div[role="option"][data-convid], div[role="option"][data-item-index], div[role="option"]')
-  );
-  return rows;
+  const selectors = [
+    'div[role="option"][data-convid]',
+    'div[role="option"][data-item-index]',
+    'div[role="option"]',
+    'div[role="row"][data-convid]',
+    'div[role="row"][data-item-index]',
+    'div[role="row"]',
+    'div[role="listitem"]',
+    'div[data-testid="messageListItem"]',
+    'li[role="option"]',
+    'li[role="listitem"]',
+  ];
+  const set = new Set<HTMLElement>();
+  for (const sel of selectors) {
+    const items = Array.from(root.querySelectorAll<HTMLElement>(sel));
+    for (const el of items) set.add(el);
+  }
+  return Array.from(set);
 }
 
 function getRowTimeText(row: HTMLElement): string {
@@ -417,12 +435,17 @@ function isUnreadByWeight(row: HTMLElement): boolean {
 }
 
 function isUnreadRow(row: HTMLElement): boolean {
+  const dataUnread = row.getAttribute("data-is-unread");
+  if (dataUnread && dataUnread.toLowerCase() === "true") return true;
+  const ariaRow = row.getAttribute("aria-label") || "";
+  if (/unread/i.test(ariaRow)) return true;
+  if (/ยังไม่อ่าน|ยังไม่ได้อ่าน/i.test(ariaRow)) return true;
+  if (/\bunread\b/i.test(row.className || "")) return true;
+
   const markReadBtn = row.querySelector(
-    'button[title*="Mark as read" i], button[aria-label*="Mark as read" i], button[title*="อ่านแล้ว" i], button[aria-label*="อ่านแล้ว" i]'
-  );
+  'button[title*="Mark as read" i], button[aria-label*="Mark as read" i], button[title*="อ่านแล้ว" i], button[aria-label*="อ่านแล้ว" i]'
+);
   if (markReadBtn) return true;
-  const aria = row.getAttribute("aria-label") || "";
-  if (/unread/i.test(aria)) return true;
   if (isUnreadByColor(row)) return true;
   if (isUnreadByWeight(row)) return true;
   return false;
@@ -459,16 +482,24 @@ async function waitForMessageText(hintCi: string, timeoutMs = 8000) {
 async function startRunFromText(rawText: string) {
   const parsed = parseTxtContent(rawText);
   const hasCi = Boolean(parsed.ci || (parsed.cis && parsed.cis.length));
+
   if (!hasCi) {
     showPageToast("ไม่พบ CI ในเมลนี้", "error");
     return { ok: false, reason: "no_ci" };
   }
+
   await chrome.runtime.sendMessage({ type: "SET_RUNNING", value: true });
-  const res = await chrome.runtime.sendMessage({ type: "RUN_UPDATE", data: parsed });
+
+  const res = await chrome.runtime.sendMessage({
+    type: "RUN_UPDATE",
+    data: parsed,
+  });
+
   if (res?.ok) {
     showPageToast("เริ่มอัปเดต CI แล้ว", "success");
     return { ok: true };
   }
+
   showPageToast("เริ่มอัปเดตไม่สำเร็จ", "error");
   return { ok: false, reason: res?.error || "run_failed" };
 }
@@ -476,29 +507,41 @@ async function startRunFromText(rawText: string) {
 async function handleCandidate(row: HTMLElement) {
   const rowId = getRowId(row);
   if (!rowId) return;
+
   inProgressId = rowId;
+
   try {
     const { subject, preview, ci } = getRowHints(row);
+
     if (!outlookOptions.autoRun) {
-      const ok = confirm(`พบ Update CI: ${subject || preview}\nเริ่มทำงานเลยไหม?`);
+      const ok = confirm(
+        `พบ Update CI: ${subject || preview}\nเริ่มทำงานเลยไหม?`
+      );
+
       if (!ok) {
         rememberProcessed(rowId);
         showPageToast("ข้ามเมลนี้แล้ว", "info");
         return;
       }
     }
+
     showPageToast("กำลังเปิดอีเมล Update CI...", "info");
+
     openRow(row);
+
     const text =
       (await waitForMessageText(ci, 9000)) ||
       buildExtractedText(preview, subject);
+
     if (!text || !hasRequiredFields(text, subject)) {
       showPageToast("ไม่พบข้อมูล Update CI จากเมลนี้", "error");
       rememberProcessed(rowId);
       return;
     }
+
     const result = await startRunFromText(text);
     if (result.ok) rememberProcessed(rowId);
+
   } finally {
     inProgressId = null;
   }
@@ -511,13 +554,19 @@ async function scanForUpdateEmail() {
   if (now - lastScanTs < 600) return;
   lastScanTs = now;
   if (!isInUpdateCiFolder()) return;
-  const { isRunning } = await chrome.storage.local.get("isRunning");
+  const { isRunning, ciUpdaterClosing } = await chrome.storage.local.get([
+    "isRunning",
+    "ciUpdaterClosing",
+  ]);
   if (isRunning === true) return;
+  if (ciUpdaterClosing && typeof ciUpdaterClosing === "object") return;
 
   const rows = getMessageRows();
   for (const row of rows) {
     const subject = getRowSubject(row);
-    if (!isUpdateCiText(subject)) continue;
+    const preview = getRowPreview(row);
+    const combined = `${subject} ${preview}`;
+    if (!isUpdateCiText(combined)) continue;
     const id = getRowId(row);
     if (!id || processedIds.has(id) || id === inProgressId) continue;
     if (outlookOptions.onlyUnread && !isUnreadRow(row)) continue;
@@ -567,7 +616,8 @@ async function initOutlookWatch() {
   startWatcher();
 }
 
-if (window.top === window) {
+if (!(window as any).__ciUpdaterOutlookWatchStarted) {
+  (window as any).__ciUpdaterOutlookWatchStarted = true;
   void initOutlookWatch();
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
@@ -585,10 +635,15 @@ chrome.runtime.onMessage.addListener((msg: OutlookMessage, _sender, sendResponse
   if (!msg || msg.type !== "OUTLOOK_GET_EMAIL") return;
   try {
     const text = getMessageBodyText();
-    if (!text) return;
+    if (!text) {
+      sendResponse({ ok: false, error: "no_text" });
+      return true;
+    }
     sendResponse({ ok: true, text });
   } catch (e: any) {
     sendResponse({ ok: false, error: e?.message || String(e) });
   }
   return true;
 });
+
+

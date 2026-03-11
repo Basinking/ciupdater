@@ -52,23 +52,6 @@ function setCloseTaskAction(payload: CloseTaskAction) {
   } catch {}
 }
 
-async function notifySkipToNext(reason: string) {
-  try {
-    const { ciUpdaterClosing, ciUpdaterRunId } = await chrome.storage.local.get([
-      "ciUpdaterClosing",
-      "ciUpdaterRunId",
-    ]);
-    const resumeIndex = Number(ciUpdaterClosing?.resumeIndex);
-    if (!Number.isFinite(resumeIndex)) return;
-    await chrome.runtime.sendMessage({
-      type: "CLOSE_TASK_DONE",
-      runId: ciUpdaterRunId || ciUpdaterClosing?.runId,
-      resumeIndex,
-      reason,
-    });
-  } catch {}
-}
-
 function getPageChgNumber(): string {
   const input =
     document.querySelector<HTMLInputElement>(
@@ -93,16 +76,69 @@ function getPageChgNumber(): string {
   return "";
 }
 
-async function openChangeTasksTabIfNeeded() {
-  const tab = document.querySelector<HTMLElement>(
+function isChangeTasksTabSelected(): boolean {
+  const tab = findChangeTasksTab();
+  if (!tab) return false;
+  return tab.getAttribute("aria-selected") === "true";
+}
+
+async function openChangeTasksTabIfNeeded(
+  timeoutMs = 8000,
+  pollMs = 180
+): Promise<boolean> {
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeoutMs) {
+    const tab = findChangeTasksTab();
+    if (!tab) {
+      await sleep(pollMs);
+      continue;
+    }
+    const selected = tab.getAttribute("aria-selected") === "true";
+    if (selected) return true;
+    tab.click();
+    await sleep(220);
+    if (tab.getAttribute("aria-selected") === "true") return true;
+  }
+  return isChangeTasksTabSelected();
+}
+
+function findChangeTasksTab(): HTMLElement | null {
+  const exact = document.querySelector<HTMLElement>(
     'span.tabs2_tab[aria-controls="change_request.change_task.change_request_list"]'
   );
-  if (!tab) return;
-  const selected = tab.getAttribute("aria-selected") === "true";
-  if (!selected) {
-    tab.click();
-    await sleep(150);
-  }
+  if (exact) return exact;
+
+  const tabs = Array.from(
+    document.querySelectorAll<HTMLElement>("span.tabs2_tab, .tabs2_tab")
+  );
+  return (
+    tabs.find((tab) => {
+      const controls = normalize(tab.getAttribute("aria-controls") || "").toLowerCase();
+      if (controls.includes("change_task")) return true;
+      const label = normalize(tab.textContent || "").toLowerCase();
+      return label.includes("change tasks");
+    }) || null
+  );
+}
+
+function isChangeTasksTable(table: HTMLTableElement): boolean {
+  const id = normalize(table.id || "").toLowerCase();
+  if (id.includes("change_task")) return true;
+  if (table.querySelector('a[href*="change_task.do"]')) return true;
+  const listRegion = table.closest<HTMLElement>('[id*="change_task"]');
+  return !!listRegion;
+}
+
+function getChangeTasksListRegion(): HTMLElement | null {
+  return (
+    document.querySelector<HTMLElement>(
+      "#change_request\\.change_task\\.change_request_list"
+    ) ||
+    document.querySelector<HTMLElement>(
+      '[id*="change_request.change_task.change_request_list"]'
+    ) ||
+    null
+  );
 }
 
 async function waitForChangeTasksTable(
@@ -111,33 +147,106 @@ async function waitForChangeTasksTable(
 ): Promise<HTMLTableElement | null> {
   const t0 = Date.now();
   while (Date.now() - t0 < timeoutMs) {
-    const table = document.querySelector<HTMLTableElement>(
-      "#change_request\\.change_task\\.change_request_table"
-    );
-    if (table) return table;
+    const exact =
+      document.querySelector<HTMLTableElement>(
+        "#change_request\\.change_task\\.change_request_table"
+      ) ||
+      getChangeTasksListRegion()?.querySelector<HTMLTableElement>(
+        "table.list2_table, table.data_list_table.list_table, table"
+      ) ||
+      null;
+    if (exact) return exact;
+
+    if (!isChangeTasksTabSelected()) {
+      await openChangeTasksTabIfNeeded(1200, pollMs);
+    }
+
+    const region = getChangeTasksListRegion();
+    const tables = region
+      ? Array.from(
+          region.querySelectorAll<HTMLTableElement>(
+            "table.list2_table, table.data_list_table.list_table, table"
+          )
+        )
+      : [];
+    const match = tables.find(isChangeTasksTable);
+    if (match) return match;
+
     await sleep(pollMs);
   }
   return null;
 }
 
-function hasNumberColumn(table: HTMLTableElement): boolean {
-  return !!table.querySelector(
-    'thead th[name="number"], thead th[glide_label="Number"]'
-  );
+function getTaskRows(table: HTMLTableElement): HTMLTableRowElement[] {
+  const tbody = table.tBodies?.[0] || table;
+  return Array.from(
+    tbody.querySelectorAll<HTMLTableRowElement>("tr.list_row, tr")
+  ).filter((tr) => tr.querySelectorAll("td").length > 0);
 }
 
 function findUpdateCiRow(
   table: HTMLTableElement
 ): HTMLTableRowElement | null {
-  const tbody = table.tBodies?.[0] || table;
-  const rows = Array.from(
-    tbody.querySelectorAll<HTMLTableRowElement>("tr.list_row, tr")
-  ).filter((tr) => tr.querySelectorAll("td").length > 0);
+  const rows = getTaskRows(table);
+  const matches = rows.filter((tr) => isForUpdateCiRow(tr));
+  const openUpdateCi = matches.find((tr) => !isClosedTaskRow(tr));
+  if (openUpdateCi) return openUpdateCi;
+  return matches[0] || null;
+}
+
+function getTaskStateText(row: HTMLTableRowElement): string {
+  const cells = Array.from(row.querySelectorAll<HTMLTableCellElement>("td"));
+  const stateCell =
+    cells.find((td) => !!td.querySelector(".list2_cell_background")) || null;
+  if (stateCell) return normalize(stateCell.textContent || "").toLowerCase();
+  return normalize(row.textContent || "").toLowerCase();
+}
+
+function isClosedTaskRow(row: HTMLTableRowElement): boolean {
+  const text = getTaskStateText(row);
   return (
-    rows.find((tr) =>
-      normalize(tr.textContent || "").toLowerCase().includes("for update ci")
-    ) || null
+    /\bclosed\b/i.test(text) ||
+    text.includes("closed complete") ||
+    text.includes("closed incomplete") ||
+    text.includes("cancelled") ||
+    text.includes("canceled")
   );
+}
+
+function isForUpdateCiText(textRaw: string): boolean {
+  const text = normalize(textRaw).toLowerCase();
+  if (!text) return false;
+  return (
+    /\bfor\s+update\s+ci\b/i.test(text) ||
+    /\bfor\s+updating\s+ci\b/i.test(text) ||
+    /\bfor\s+update\s+configuration\s+item\b/i.test(text) ||
+    /\bupdate\s+ci\b/i.test(text)
+  );
+}
+
+function getShortDescriptionText(row: HTMLTableRowElement): string {
+  const link = findNumberLink(row);
+  const numberCell = link?.closest("td") || null;
+  if (numberCell) {
+    const nextCell = numberCell.nextElementSibling as HTMLTableCellElement | null;
+    if (nextCell) {
+      const text = normalize(nextCell.textContent || "");
+      if (text) return text;
+    }
+  }
+
+  const cells = Array.from(row.querySelectorAll<HTMLTableCellElement>("td"));
+  if (cells.length >= 4) {
+    const text = normalize(cells[3]?.textContent || "");
+    if (text) return text;
+  }
+  return normalize(row.textContent || "");
+}
+
+function isForUpdateCiRow(row: HTMLTableRowElement): boolean {
+  const shortDesc = getShortDescriptionText(row);
+  if (isForUpdateCiText(shortDesc)) return true;
+  return isForUpdateCiText(normalize(row.textContent || ""));
 }
 
 function findNumberLink(row: HTMLTableRowElement): HTMLAnchorElement | null {
@@ -150,6 +259,62 @@ function findNumberLink(row: HTMLTableRowElement): HTMLAnchorElement | null {
     /change_task\.do/i.test(a.getAttribute("href") || "")
   );
   return byHref || null;
+}
+
+function findForUpdateCiTaskLink(table: HTMLTableElement): HTMLAnchorElement | null {
+  const updateRow = findUpdateCiRow(table);
+  if (updateRow) {
+    const link = findNumberLink(updateRow);
+    if (link) return link;
+  }
+  return null;
+}
+
+function findForUpdateCiTaskLinkAnywhere(): HTMLAnchorElement | null {
+  const rows = Array.from(
+    document.querySelectorAll<HTMLTableRowElement>("tr.list_row, tr")
+  ).filter((tr) => tr.querySelectorAll("td").length > 0);
+
+  for (const row of rows.filter((tr) => isForUpdateCiRow(tr) && !isClosedTaskRow(tr))) {
+    const link = findNumberLink(row);
+    if (link) return link;
+  }
+
+  for (const row of rows.filter((tr) => isForUpdateCiRow(tr))) {
+    const link = findNumberLink(row);
+    if (link) return link;
+  }
+
+  const anchors = Array.from(
+    document.querySelectorAll<HTMLAnchorElement>('a[href*="change_task.do"], a')
+  );
+  const updateAnchor = anchors.find((a) => {
+    const rowText = normalize(a.closest("tr")?.textContent || "");
+    const text = normalize(a.textContent || "");
+    return (
+      /CTASK\d+/i.test(text) &&
+      (/\b(?:for\s+)?(?:update|updating)\s+ci\b/i.test(rowText) ||
+        /\bci\s*update\b/i.test(rowText))
+    );
+  });
+  if (updateAnchor) return updateAnchor;
+  return null;
+}
+
+async function waitForUpdateCiTaskLink(
+  timeoutMs = 15000,
+  pollMs = 220
+): Promise<HTMLAnchorElement | null> {
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeoutMs) {
+    await openChangeTasksTabIfNeeded(1200, pollMs);
+    const table = await waitForChangeTasksTable(1200, pollMs);
+    const link = (table ? findForUpdateCiTaskLink(table) : null)
+      || findForUpdateCiTaskLinkAnywhere();
+    if (link) return link;
+    await sleep(pollMs);
+  }
+  return null;
 }
 
 (async function run() {
@@ -172,34 +337,15 @@ function findNumberLink(row: HTMLTableRowElement): HTMLAnchorElement | null {
       return;
     }
 
-    await openChangeTasksTabIfNeeded();
-    const table = await waitForChangeTasksTable();
-    if (!table) {
-      log("Change Tasks table not found; skip");
-      clearCloseAction();
+    const tabReady = await openChangeTasksTabIfNeeded(12000, 220);
+    if (!tabReady) {
+      log("Unable to open Change Tasks tab; keep close phase");
       return;
     }
 
-    if (!hasNumberColumn(table)) {
-      log("Number column not found; skip");
-      clearCloseAction();
-      await notifySkipToNext("number_column_missing");
-      return;
-    }
-
-    const row = findUpdateCiRow(table);
-    if (!row) {
-      log("For Update CI row not found; skip");
-      clearCloseAction();
-      await notifySkipToNext("update_ci_row_missing");
-      return;
-    }
-
-    const link = findNumberLink(row);
+    const link = await waitForUpdateCiTaskLink(16000, 220);
     if (!link) {
-      log("Change Task link not found; skip");
-      clearCloseAction();
-      await notifySkipToNext("change_task_link_missing");
+      log("For Update CI task not found; keep close phase");
       return;
     }
     try {
@@ -222,6 +368,5 @@ function findNumberLink(row: HTMLTableRowElement): HTMLAnchorElement | null {
     clearCloseAction();
   } catch (e) {
     console.error("[CI Updater][Change-Request] error:", e);
-    clearCloseAction();
   }
 })();

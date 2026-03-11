@@ -363,6 +363,19 @@ async function waitForChoiceOption(
   return null;
 }
 
+async function hasChoiceField(
+  fieldSuffix: string,
+  timeoutMs = 1500,
+  pollMs = 120
+): Promise<boolean> {
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeoutMs) {
+    if (findChoiceSelect(fieldSuffix)) return true;
+    await sleep(pollMs);
+  }
+  return false;
+}
+
 async function setChoiceByLabel(
   fieldSuffix: string,
   label: string,
@@ -811,19 +824,41 @@ async function setReferenceField(
 
     const rawStatus = (data.currentStatus || "").toString();
     const retiredSubstatus = getRetiredSubstatus(rawStatus);
+    const baseMappedInstallStatus = mapInstallStatus(rawStatus);
+    const shouldMapInstalledProfile =
+      !retiredSubstatus && baseMappedInstallStatus === "1";
+    const shouldMapInStockProfile =
+      !retiredSubstatus && baseMappedInstallStatus === "6";
+    const targetHardwareStatusLabel = retiredSubstatus
+      ? "Retired"
+      : shouldMapInstalledProfile
+        ? "Installed"
+        : shouldMapInStockProfile
+          ? "In Stock"
+        : null;
+    const targetHardwareSubstatusLabel = retiredSubstatus
+      ? retiredSubstatus
+      : shouldMapInstalledProfile
+        ? "In Use"
+        : shouldMapInStockProfile
+          ? "Available"
+        : null;
     let hardwareStatusApplied = false;
     let installStatusApplied = false;
 
-    if (retiredSubstatus) {
+    if (targetHardwareStatusLabel) {
       try {
         hardwareStatusApplied = await setChoiceByLabel(
           "hardware_status",
-          "Retired",
+          targetHardwareStatusLabel,
           4000,
           1500
         );
-        if (hardwareStatusApplied) log("Hardware Status set");
-        else log("Hardware Status not applied");
+        if (hardwareStatusApplied) {
+          log("Hardware Status set", targetHardwareStatusLabel);
+        } else {
+          log("Hardware Status not applied", targetHardwareStatusLabel);
+        }
       } catch (e) {
         log("Hardware Status error", e);
       }
@@ -831,7 +866,7 @@ async function setReferenceField(
 
     // 1) ตั้งค่า Install Status จาก Current Status (ถ้ามีฟิลด์นี้)
     try {
-      let mapped = mapInstallStatus(rawStatus);
+      let mapped = baseMappedInstallStatus;
       if (retiredSubstatus) mapped = "7"; // Retired
       log("Install Status mapping", { rawStatus, mapped });
       if (mapped) {
@@ -898,16 +933,28 @@ async function setReferenceField(
       log("Install Status error", e);
     }
 
-    if (retiredSubstatus && hardwareStatusApplied && installStatusApplied) {
+    if (
+      targetHardwareSubstatusLabel &&
+      hardwareStatusApplied &&
+      installStatusApplied
+    ) {
       try {
-        const subApplied = await setChoiceByLabel(
-          "hardware_substatus",
-          retiredSubstatus,
-          6000,
-          1500
-        );
-        if (subApplied) log("Hardware Substatus set");
-        else log("Hardware Substatus not applied");
+        const hasSubstatus = await hasChoiceField("hardware_substatus", 1800, 120);
+        if (!hasSubstatus) {
+          log("Hardware Substatus field not present; skip");
+        } else {
+          const subApplied = await setChoiceByLabel(
+            "hardware_substatus",
+            targetHardwareSubstatusLabel,
+            6000,
+            1500
+          );
+          if (subApplied) {
+            log("Hardware Substatus set", targetHardwareSubstatusLabel);
+          } else {
+            log("Hardware Substatus not applied", targetHardwareSubstatusLabel);
+          }
+        }
       } catch (e) {
         log("Hardware Substatus error", e);
       }

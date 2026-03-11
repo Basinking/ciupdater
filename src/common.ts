@@ -229,7 +229,7 @@ export function parseTxtContent(text: string): ParsedData {
     },
     {
       key: "contact",
-      re: /^(?:\d+\.\s*)?(?:Contact\s*Name|Owned\s*by|Owner\s*by)\s*[:：]\s*(.*)$/i,
+      re: /^(?:\d+\.\s*)?(?:Cont(?:act|ract)\s*Name|Owned\s*by|Owner\s*by)\s*[:：]\s*(.*)$/i,
       normalize: cleanContactName,
     },
     {
@@ -381,9 +381,9 @@ export function parseTxtContent(text: string): ParsedData {
   const currentStatus = normalizeCurrentStatus(currentStatusRaw);
   const toClient = getBy("To\\s*Client");
 
-  // Contact: อาจมาเป็น Contact Name, Owned by, Owner by
+  // Contact: อาจมาเป็น Contact Name/Contract Name, Owned by, Owner by
   const contactRaw =
-    getBy("Contact\\s*Name") ||
+    getBy("Cont(?:act|ract)\\s*Name") ||
     getBy("Owned\\s*by|Owner\\s*by");
   const contact = cleanContactName(contactRaw);
 

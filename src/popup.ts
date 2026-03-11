@@ -71,6 +71,33 @@ function getActiveTab(): Promise<chrome.tabs.Tab | null> {
   });
 }
 
+function isOutlookUrl(url?: string | null): boolean {
+  const u = (url || "").toLowerCase();
+  return (
+    u.includes("outlook.office.com") ||
+    u.includes("outlook.office365.com") ||
+    u.includes("outlook.live.com") ||
+    u.includes("outlook.cloud.microsoft")
+  );
+}
+
+async function findOutlookTab(): Promise<chrome.tabs.Tab | null> {
+  const active = await getActiveTab();
+  if (active && isOutlookUrl(active.url)) return active;
+  return new Promise((resolve) => {
+    try {
+      chrome.tabs.query({}, (tabs) => {
+        const outlookTabs = (tabs || []).filter((t) => isOutlookUrl(t.url));
+        if (!outlookTabs.length) return resolve(null);
+        outlookTabs.sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0));
+        resolve(outlookTabs[0]);
+      });
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
 function requestOutlookMessage(tabId: number): Promise<string> {
   return new Promise((resolve, reject) => {
     chrome.tabs.sendMessage(tabId, { type: "OUTLOOK_GET_EMAIL" }, (res) => {
@@ -473,9 +500,9 @@ parseBtn.addEventListener("click", () => {
 outlookBtn?.addEventListener("click", async () => {
   showToast("กำลังดึงข้อมูลจาก Outlook...", "info");
   try {
-    const tab = await getActiveTab();
+    const tab = await findOutlookTab();
     if (!tab?.id) {
-      showToast("ไม่พบแท็บที่เปิดอยู่", "error");
+      showToast("กรุณาเปิดแท็บ Outlook Web แล้วลองใหม่", "error");
       return;
     }
     const text = (await requestOutlookMessage(tab.id)).trim();
@@ -490,8 +517,12 @@ outlookBtn?.addEventListener("click", async () => {
   } catch (e: any) {
     const msg = e?.message || String(e);
     const lower = msg.toLowerCase();
+    if (lower.includes("no_text")) {
+      showToast("กรุณาเปิดอีเมลที่ต้องการใน Outlook Web ก่อน", "error");
+      return;
+    }
     if (lower.includes("receiving end does not exist") || lower.includes("could not establish connection")) {
-      showToast("กรุณาเปิดอีเมลใน Outlook Web ก่อน", "error");
+      showToast("กรุณาเปิดแท็บ Outlook Web แล้วลองใหม่", "error");
       return;
     }
     showToast("ดึงข้อมูลจาก Outlook ไม่สำเร็จ", "error");

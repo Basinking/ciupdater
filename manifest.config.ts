@@ -16,7 +16,9 @@ export default defineManifest({
   host_permissions: [
     "https://ricohap.service-now.com/*",
     "https://outlook.office.com/*",
-    "https://outlook.office365.com/*"
+    "https://outlook.office365.com/*",
+    "https://outlook.live.com/*",
+    "https://outlook.cloud.microsoft/*"
   ],
   action: {
     default_title: "CI Updater",
@@ -47,7 +49,9 @@ export default defineManifest({
     {
       matches: [
         "https://outlook.office.com/*",
-        "https://outlook.office365.com/*"
+        "https://outlook.office365.com/*",
+        "https://outlook.live.com/*",
+        "https://outlook.cloud.microsoft/*"
       ],
       js: ["src/content-outlook.ts"],
       run_at: "document_idle",

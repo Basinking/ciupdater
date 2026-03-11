@@ -12,7 +12,13 @@ type Messages =
   | { type: "STOP_NOW" }
   | { type: "SET_RUNNING"; value: boolean }
   | { type: "FINISHED_ONE"; runId?: string }
-  | { type: "CLOSE_TASK_DONE"; runId?: string; resumeIndex?: number }
+  | {
+      type: "CLOSE_TASK_DONE";
+      runId?: string;
+      resumeIndex?: number;
+      success?: boolean;
+      reason?: string;
+    }
   | { type: "REQUEST_LIST_RETRY"; runId?: string; reason?: string };
 
 let workerTabId: number | null = null;
@@ -21,6 +27,7 @@ let originWindowId: number | null = null;
 const NEXT_CI_ALARM = "ci-updater-next-ci";
 const LIST_RETRY_ALARM = "ci-updater-list-retry";
 const ORIGIN_KEY = "ciUpdaterOrigin";
+const CLOSE_RESUME_FINISH = -1;
 const RUN_STATE_KEYS = [
   "ciUpdaterQueue",
   "ciUpdaterBase",
@@ -173,7 +180,7 @@ chrome.runtime.onMessage.addListener((msg: Messages, _sender, sendResponse) => {
       }
 
       if (msg.type === "CLOSE_TASK_DONE") {
-        await handleCloseTaskDone(msg.runId, msg.resumeIndex);
+        await handleCloseTaskDone(msg.runId, msg.resumeIndex, msg.success, msg.reason);
         sendResponse({ ok: true });
         return;
       }
@@ -448,13 +455,17 @@ async function startClosePhase(
       await chrome.storage.local.remove(["ciUpdaterNext", "ciUpdaterRetry"]);
     } catch {}
 
+    const resolvedResumeIndex = Number.isFinite(resumeIndex)
+      ? Number(resumeIndex)
+      : CLOSE_RESUME_FINISH;
+
     await chrome.storage.local.set({
       ciUpdaterClosing: {
         runId: ciUpdaterRunId || runId,
         ci,
         chg,
         ts: Date.now(),
-        ...(Number.isFinite(resumeIndex) ? { resumeIndex } : {}),
+        resumeIndex: resolvedResumeIndex,
       },
     });
 
@@ -571,7 +582,12 @@ async function handleListRetryAlarm() {
   await openOrReuseTab(listUrl);
 }
 
-async function handleCloseTaskDone(runId?: string, resumeIndex?: number) {
+async function handleCloseTaskDone(
+  runId?: string,
+  resumeIndex?: number,
+  success?: boolean,
+  reason?: string
+) {
   try {
     const {
       ciUpdaterRunId,
@@ -594,10 +610,22 @@ async function handleCloseTaskDone(runId?: string, resumeIndex?: number) {
           ? closing.resumeIndex
           : NaN;
     if (!Number.isFinite(idxRaw)) return;
+    if (success === false) {
+      console.warn("[CI Updater] close phase incomplete; hold next CI", {
+        runId: ciUpdaterRunId || runId,
+        reason: reason || "unknown",
+        resumeIndex: idxRaw,
+      });
+      return;
+    }
 
     try {
       await chrome.storage.local.remove("ciUpdaterClosing");
     } catch {}
+    if (idxRaw === CLOSE_RESUME_FINISH) {
+      await finishRunAndReturn();
+      return;
+    }
     await scheduleNextCi(idxRaw, ciUpdaterRunId || runId);
   } catch (e) {
     console.error("[CI Updater] handleCloseTaskDone error", e);

@@ -299,9 +299,9 @@ function requestListRetry(runId?: string, reason?: string) {
       const resumeIndex =
         typeof closing.resumeIndex === "number" ? closing.resumeIndex : NaN;
       if (!Number.isFinite(resumeIndex)) {
-        try {
-          await chrome.runtime.sendMessage({ type: "SET_RUNNING", value: false });
-        } catch {}
+        console.warn(
+          "[CI Updater] close phase missing resumeIndex; waiting for close task completion"
+        );
       }
       return;
     }
